@@ -1,0 +1,279 @@
+/* WORKSPACE MODE SWITCHER TABS */
+.mode-switcher-tabs {
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
+}
+
+.mode-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.mode-tab-btn:hover {
+  color: var(--text-main);
+}
+
+.mode-tab-btn.active {
+  background: var(--accent-cyan);
+  color: var(--text-inverse);
+  font-weight: 600;
+  box-shadow: 0 0 8px var(--accent-cyan-glow);
+}
+
+.mode-tab-btn.active.path-mode {
+  background: var(--accent-purple);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+}
+
+/* PATHS LIST & WAYPOINT SEQUENCE */
+.path-selector-box {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.path-select-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.path-select-dropdown {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.waypoint-sequence-header {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.waypoint-chain-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.waypoint-item-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.waypoint-item-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-active);
+}
+
+.waypoint-item-card.selected {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.25);
+}
+
+.waypoint-item-card.terminal-node {
+  border-left: 3px solid var(--accent-cyan);
+}
+
+.wp-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--accent-amber);
+  border: 1px solid var(--accent-amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wp-badge.terminal {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.wp-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.wp-title {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wp-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.wp-reorder-buttons {
+  display: flex;
+  gap: 2px;
+}
+
+/* PLAYBACK TIMELINE HUD */
+.playback-timeline-hud {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: 90%;
+  max-width: 720px;
+  background: var(--bg-panel-solid);
+  border: 1px solid var(--border-active);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: hud-slide-up 0.25s ease;
+}
+
+@keyframes hud-slide-up {
+  from { opacity: 0; transform: translate(-50%, 15px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.timeline-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.timeline-buttons-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-play-pause {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-purple);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast);
+}
+.btn-play-pause:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.6);
+}
+
+.timeline-time-display {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.timeline-time-display .current {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.timeline-slider-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+  width: 100%;
+}
+
+.timeline-slider {
+  width: 100%;
+  height: 6px;
+  background: var(--border-subtle);
+  border-radius: var(--radius-full);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent-purple);
+}
+
+.timeline-waypoints-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.timeline-wp-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--accent-amber);
+  border: 1px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, 0);
+}
+
+/* COLLISION WARNING CARD */
+.collision-warning-box {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--accent-rose);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
