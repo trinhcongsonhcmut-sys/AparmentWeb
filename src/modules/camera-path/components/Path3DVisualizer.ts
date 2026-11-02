@@ -128,12 +128,30 @@ export class Path3DVisualizer {
       roughness: 0.3,
       metalness: 0.7,
       emissive: isSelected ? 0x00e5ff : 0x78350f,
-      emissiveIntensity: isSelected ? 0.6 : 0.2,
+      emissiveIntensity: isSelected ? 0.7 : 0.2,
     });
 
     const mesh = new THREE.Mesh(geom, mat);
+    mesh.name = 'WaypointDiamondMesh';
     mesh.castShadow = true;
+    if (isSelected) {
+      mesh.scale.set(1.2, 1.2, 1.2);
+    }
     anchor.add(mesh);
+
+    // Selection Halo Ring
+    const ringGeo = new THREE.RingGeometry(0.32, 0.4, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x00e5ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: isSelected ? 0.85 : 0,
+    });
+    const halo = new THREE.Mesh(ringGeo, ringMat);
+    halo.name = 'WaypointHalo';
+    halo.rotation.x = Math.PI / 2;
+    halo.visible = isSelected;
+    anchor.add(halo);
 
     // Orientation view direction cone/arrow
     const orientationMode = wp.orientation?.mode || 'followPath';
@@ -163,6 +181,128 @@ export class Path3DVisualizer {
 
   public getAnchor(waypointId: string): THREE.Object3D | undefined {
     return this.waypointAnchors.get(waypointId);
+  }
+
+  public getWaypointGroup(): THREE.Group {
+    return this.waypointGroup;
+  }
+
+  public pickWaypoint(raycaster: THREE.Raycaster): string | null {
+    if (!this.waypointGroup.visible) return null;
+    const intersects = raycaster.intersectObjects(this.waypointGroup.children, true);
+    for (const hit of intersects) {
+      let cur: THREE.Object3D | null = hit.object;
+      while (cur && cur !== this.waypointGroup) {
+        if (cur.userData && cur.userData.waypointId) {
+          return cur.userData.waypointId;
+        }
+        cur = cur.parent;
+      }
+    }
+    return null;
+  }
+
+  public updateWaypointSelection(selectedWaypointId: string | null): void {
+    this.waypointAnchors.forEach((anchor, wpId) => {
+      const isSelected = wpId === selectedWaypointId;
+      const mesh = anchor.getObjectByName('WaypointDiamondMesh') as THREE.Mesh | undefined;
+      if (mesh && mesh.material) {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.color.setHex(isSelected ? 0x00e5ff : 0xf59e0b);
+        mat.emissive.setHex(isSelected ? 0x00e5ff : 0x78350f);
+        mat.emissiveIntensity = isSelected ? 0.75 : 0.2;
+        mesh.scale.set(isSelected ? 1.25 : 1.0, isSelected ? 1.25 : 1.0, isSelected ? 1.25 : 1.0);
+      }
+      const halo = anchor.getObjectByName('WaypointHalo') as THREE.Mesh | undefined;
+      if (halo) {
+        halo.visible = isSelected;
+        if (halo.material) {
+          (halo.material as THREE.MeshBasicMaterial).opacity = isSelected ? 0.85 : 0;
+        }
+      }
+    });
+  }
+
+  public updateTrajectoryOnly(
+    path: CameraPath | null,
+    evaluator: PathTrajectoryEvaluator,
+    toHotspot?: HotspotItem
+  ): void {
+    // Clear only trajectory group, keep waypoint anchors intact!
+    while (this.pathGroup.children.length > 0) {
+      const child = this.pathGroup.children[0];
+      this.pathGroup.remove(child);
+      if ((child as any).geometry) (child as any).geometry.dispose();
+      if ((child as any).material) (child as any).material.dispose();
+    }
+    this.curveMesh = null;
+    this.arrowHelpers = [];
+
+    if (!path) return;
+
+    // Draw 3D Curve Line
+    const points = evaluator.getSpacedPoints(120);
+    if (points.length >= 2) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({
+        color: 0x8b5cf6, // Violet glowing trajectory
+        linewidth: 3,
+        depthTest: true,
+      });
+
+      this.curveMesh = new THREE.Line(geometry, material);
+      this.pathGroup.add(this.curveMesh);
+
+      // Add directional arrows at 25%, 50%, 75%
+      const arrowFractions = [0.25, 0.5, 0.75];
+      for (const frac of arrowFractions) {
+        const p = points[Math.floor(frac * points.length)];
+        const nextP = points[Math.min(points.length - 1, Math.floor(frac * points.length) + 1)];
+        const dir = new THREE.Vector3().subVectors(nextP, p).normalize();
+        if (dir.lengthSq() > 0.001) {
+          const arrow = new THREE.ArrowHelper(dir, p, 0.6, 0xf59e0b, 0.25, 0.15);
+          this.pathGroup.add(arrow);
+          this.arrowHelpers.push(arrow);
+        }
+      }
+    }
+
+    // Render Destination Orientation Pointer at resolved end position
+    const resolvedEndPos = evaluator.getResolvedEndPosition(path);
+    if (resolvedEndPos) {
+      const qEnd = evaluator.getEndQuaternion(path);
+      if (qEnd) {
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(qEnd).normalize();
+        const endArrow = new THREE.ArrowHelper(
+          forward,
+          resolvedEndPos,
+          1.2,
+          0x00e5ff,
+          0.35,
+          0.2
+        );
+        endArrow.name = 'EndOrientationArrow';
+        this.pathGroup.add(endArrow);
+        this.arrowHelpers.push(endArrow);
+      }
+
+      if (toHotspot) {
+        const hPos = new THREE.Vector3(toHotspot.position.x, toHotspot.position.y, toHotspot.position.z);
+        if (hPos.distanceTo(resolvedEndPos) > 0.05) {
+          const linkGeo = new THREE.BufferGeometry().setFromPoints([resolvedEndPos, hPos]);
+          const linkMat = new THREE.LineDashedMaterial({
+            color: 0xc4b5fd,
+            dashSize: 0.15,
+            gapSize: 0.1,
+            transparent: true,
+            opacity: 0.7,
+          });
+          const linkLine = new THREE.Line(linkGeo, linkMat);
+          linkLine.computeLineDistances();
+          this.pathGroup.add(linkLine);
+        }
+      }
+    }
   }
 
   public setVisible(visible: boolean): void {

@@ -1,6 +1,7 @@
-import { HotspotItem, Vector3D } from '../../hotspots/types/hotspot.types';
-import { CameraPath, CameraWaypoint } from '../../camera-path/types/cameraPath.types';
-import { RenderMediaItem } from '../../media-gallery/types/mediaGallery.types';
+import type { HotspotItem, Vector3D } from '../../hotspots/types/hotspot.types.ts';
+import type { CameraPath, CameraWaypoint } from '../../camera-path/types/cameraPath.types.ts';
+import type { WaypointEdge } from '../../camera-path/types/waypointGraph.types.ts';
+import type { RenderMediaItem } from '../../media-gallery/types/mediaGallery.types.ts';
 
 export interface ModelInfoMeta {
   fileName: string;
@@ -20,14 +21,21 @@ export interface ViewerSettings {
   gridVisible: boolean;
 }
 
+export interface GlobalWaypointGraphData {
+  waypoints: CameraWaypoint[];
+  edges: WaypointEdge[];
+}
+
 export interface ProjectConfigSchema {
-  schemaVersion: '1.0.0';
+  schemaVersion: '1.0.0' | '1.1.0' | '1.2.0' | '1.3.0';
   projectId: string;
   projectName: string;
   updatedAt: string;
   modelInfo: ModelInfoMeta;
   hotspots: HotspotItem[];
   waypoints?: CameraWaypoint[];
+  waypointEdges?: WaypointEdge[];
+  waypointGraph?: GlobalWaypointGraphData;
   cameraPaths?: CameraPath[];
   settings: ViewerSettings;
   exportedAt?: string;

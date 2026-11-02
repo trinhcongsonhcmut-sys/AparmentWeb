@@ -58,7 +58,8 @@ export class PathPlaybackController {
 
     this.currentPath = path;
     this.evaluator = evaluator;
-    this.currentProgress = startProgress;
+    // If starting at or past the end, restart cleanly from beginning
+    this.currentProgress = startProgress >= 0.999 ? 0 : startProgress;
     this.setState('playing');
 
     // Disable OrbitControls during preview playback

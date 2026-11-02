@@ -1,4 +1,4 @@
-import { Vector3D } from '../../modules/hotspots/types/hotspot.types';
+import type { Vector3D } from '../../modules/hotspots/types/hotspot.types';
 
 export class MathUtils {
   static round(val: number, decimals: number = 2): number {

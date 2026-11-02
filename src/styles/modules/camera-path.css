@@ -39,6 +39,43 @@
   box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
 }
 
+.mode-tab-btn.active.graph-mode {
+  background: #0ea5e9;
+  box-shadow: 0 0 8px rgba(14, 165, 233, 0.4);
+}
+
+/* FLOATING GRAPH OVERLAY TOGGLE */
+.btn-graph-overlay-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(14, 165, 233, 0.4);
+  color: #38bdf8;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-graph-overlay-toggle:hover {
+  background: rgba(14, 165, 233, 0.2);
+  border-color: #38bdf8;
+}
+
+.btn-graph-overlay-toggle.active {
+  background: #0ea5e9;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.5);
+}
+
 /* PATHS LIST & WAYPOINT SEQUENCE */
 .path-selector-box {
   padding: 10px 14px;

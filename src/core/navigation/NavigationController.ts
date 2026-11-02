@@ -103,6 +103,10 @@ export class NavigationController {
     this.cameraTween.animateTo(newCamPos, position, { duration: 600 });
   }
 
+  public flyTo(position: THREE.Vector3, target: THREE.Vector3, durationSec: number = 1.0): void {
+    this.cameraTween.animateTo(position, target, { duration: Math.round(durationSec * 1000) });
+  }
+
   public focusBounds(box: THREE.Box3): void {
     if (box.isEmpty()) return;
 

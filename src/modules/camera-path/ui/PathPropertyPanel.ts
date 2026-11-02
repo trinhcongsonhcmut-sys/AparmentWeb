@@ -31,26 +31,10 @@ export class PathPropertyPanel {
   private btnDuplicatePath: HTMLButtonElement;
   private btnDeletePath: HTMLButtonElement;
 
-  // End Orientation & Transform Form Fields
-  private selectEndMode: HTMLSelectElement;
-  private boxEndCustomFields: HTMLElement;
-  private btnAlignEndOrientViewport: HTMLButtonElement;
-  private chkPathEndCustomPos: HTMLInputElement;
-  private boxPathEndPosFields: HTMLElement;
-  private btnPathEndPosCurrent: HTMLButtonElement;
-  private inputEndPosX: HTMLInputElement;
-  private inputEndPosY: HTMLInputElement;
-  private inputEndPosZ: HTMLInputElement;
-  private inputEndYaw: HTMLInputElement;
-  private inputEndPitch: HTMLInputElement;
-  private inputEndRoll: HTMLInputElement;
+  // End Orientation & Transition Fields
   private sliderEndTransition: HTMLInputElement;
   private valEndTransition: HTMLElement;
   private selectEndEasing: HTMLSelectElement;
-  private btnResetEndOrientToHotspot: HTMLButtonElement;
-
-  private onStartAlignEndOrientation?: () => void;
-  private onGetCurrentCameraTransform?: () => { position: { x: number; y: number; z: number }; yaw: number; pitch: number; roll: number };
 
   // Waypoint Form Fields
   private inputWpName: HTMLInputElement;
@@ -71,13 +55,11 @@ export class PathPropertyPanel {
   constructor(
     pathStore: CameraPathStore,
     hotspotStore: HotspotStore,
-    history: CommandHistory,
-    onStartAlignEndOrientation?: () => void
+    history: CommandHistory
   ) {
     this.pathStore = pathStore;
     this.hotspotStore = hotspotStore;
     this.history = history;
-    this.onStartAlignEndOrientation = onStartAlignEndOrientation;
 
     this.emptyState = document.getElementById('path-inspector-empty')!;
     this.pathForm = document.getElementById('path-inspector-form')!;
@@ -97,23 +79,10 @@ export class PathPropertyPanel {
     this.btnDuplicatePath = document.getElementById('btn-path-duplicate') as HTMLButtonElement;
     this.btnDeletePath = document.getElementById('btn-path-delete') as HTMLButtonElement;
 
-    // End Orientation & Transform inputs
-    this.selectEndMode = document.getElementById('prop-path-end-mode') as HTMLSelectElement;
-    this.boxEndCustomFields = document.getElementById('path-end-orient-custom-fields')!;
-    this.btnAlignEndOrientViewport = document.getElementById('btn-align-end-orient-viewport') as HTMLButtonElement;
-    this.chkPathEndCustomPos = document.getElementById('chk-path-end-custom-pos') as HTMLInputElement;
-    this.boxPathEndPosFields = document.getElementById('path-end-pos-fields')!;
-    this.btnPathEndPosCurrent = document.getElementById('btn-path-end-pos-current') as HTMLButtonElement;
-    this.inputEndPosX = document.getElementById('prop-path-end-pos-x') as HTMLInputElement;
-    this.inputEndPosY = document.getElementById('prop-path-end-pos-y') as HTMLInputElement;
-    this.inputEndPosZ = document.getElementById('prop-path-end-pos-z') as HTMLInputElement;
-    this.inputEndYaw = document.getElementById('prop-path-end-yaw') as HTMLInputElement;
-    this.inputEndPitch = document.getElementById('prop-path-end-pitch') as HTMLInputElement;
-    this.inputEndRoll = document.getElementById('prop-path-end-roll') as HTMLInputElement;
+    // End Orientation inputs (transition duration & easing towards destination hotspot)
     this.sliderEndTransition = document.getElementById('prop-path-end-transition') as HTMLInputElement;
     this.valEndTransition = document.getElementById('val-path-end-transition')!;
     this.selectEndEasing = document.getElementById('prop-path-end-easing') as HTMLSelectElement;
-    this.btnResetEndOrientToHotspot = document.getElementById('btn-reset-end-orient-to-hotspot') as HTMLButtonElement;
 
     // Waypoint inputs
     this.inputWpName = document.getElementById('prop-wp-name') as HTMLInputElement;
@@ -199,50 +168,7 @@ export class PathPropertyPanel {
       if (path) this.pathStore.duplicatePath(path.id);
     });
 
-    // --- END ORIENTATION EVENTS ---
-    this.selectEndMode.addEventListener('change', () => {
-      const path = this.pathStore.getActivePath();
-      if (!path || this.isInternalUpdate) return;
-      const mode = this.selectEndMode.value as any;
-      const prevEnd = path.endOrientation || { mode: 'hotspot' };
-      const toHotspot = this.hotspotStore.getById(path.toHotspotId);
-
-      const nextEnd = {
-        ...prevEnd,
-        mode,
-        yaw: prevEnd.yaw ?? (toHotspot?.rotation?.y || 0),
-        pitch: prevEnd.pitch ?? (toHotspot?.rotation?.x || 0),
-        roll: prevEnd.roll ?? (toHotspot?.rotation?.z || 0),
-        transitionDuration: prevEnd.transitionDuration ?? 2.0,
-      };
-
-      const next = { ...path, endOrientation: nextEnd };
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'chế độ hướng nhìn đích'));
-    });
-
-    const onEndAngleChange = () => {
-      const path = this.pathStore.getActivePath();
-      if (!path || this.isInternalUpdate) return;
-      const yaw = MathUtils.round(parseFloat(this.inputEndYaw.value) || 0, 1);
-      const pitch = MathUtils.round(parseFloat(this.inputEndPitch.value) || 0, 1);
-      const roll = MathUtils.round(parseFloat(this.inputEndRoll.value) || 0, 1);
-
-      const nextEnd = {
-        ...(path.endOrientation || { mode: 'custom' }),
-        mode: 'custom' as const,
-        yaw: (yaw % 360 + 360) % 360,
-        pitch: Math.max(-85, Math.min(85, pitch)),
-        roll,
-      };
-
-      const next = { ...path, endOrientation: nextEnd };
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'góc hướng nhìn đích'));
-    };
-
-    this.inputEndYaw.addEventListener('change', onEndAngleChange);
-    this.inputEndPitch.addEventListener('change', onEndAngleChange);
-    this.inputEndRoll.addEventListener('change', onEndAngleChange);
-
+    // --- END ORIENTATION & DESTINATION HOTSPOT EVENTS ---
     this.sliderEndTransition.addEventListener('input', () => {
       this.valEndTransition.textContent = `${this.sliderEndTransition.value}s`;
     });
@@ -252,7 +178,7 @@ export class PathPropertyPanel {
       if (!path || this.isInternalUpdate) return;
       const dur = parseFloat(this.sliderEndTransition.value) || 2.0;
       const nextEnd = {
-        ...(path.endOrientation || { mode: 'custom' }),
+        ...(path.endOrientation || { mode: 'hotspot' as const }),
         transitionDuration: dur,
       };
       const next = { ...path, endOrientation: nextEnd };
@@ -264,114 +190,22 @@ export class PathPropertyPanel {
       if (!path || this.isInternalUpdate) return;
       const easing = this.selectEndEasing.value as any;
       const nextEnd = {
-        ...(path.endOrientation || { mode: 'custom' }),
+        ...(path.endOrientation || { mode: 'hotspot' as const }),
         easing,
       };
       const next = { ...path, endOrientation: nextEnd };
       this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'độ mượt xoay đích'));
     });
 
-    this.btnAlignEndOrientViewport.addEventListener('click', () => {
-      this.onStartAlignEndOrientation?.();
-    });
-
-    this.chkPathEndCustomPos.addEventListener('change', () => {
+    // Button to jump to destination hotspot for editing standard view
+    document.getElementById('btn-edit-dest-hotspot-orient')?.addEventListener('click', () => {
       const path = this.pathStore.getActivePath();
-      if (!path || this.isInternalUpdate) return;
-      const checked = this.chkPathEndCustomPos.checked;
-      this.boxPathEndPosFields.style.display = checked ? 'flex' : 'none';
-
+      if (!path) return;
       const toHotspot = this.hotspotStore.getById(path.toHotspotId);
-      const posX = path.endPosition ? path.endPosition.x : (toHotspot?.position.x || 0);
-      const posY = path.endPosition ? path.endPosition.y : (toHotspot?.position.y || 0);
-      const posZ = path.endPosition ? path.endPosition.z : (toHotspot?.position.z || 0);
-
-      const next: CameraPath = {
-        ...path,
-        useCustomEndPosition: checked,
-        endPosition: { x: posX, y: posY, z: posZ },
-        endOrientation: {
-          ...(path.endOrientation || { mode: 'hotspot' }),
-          useCustomPosition: checked,
-          position: { x: posX, y: posY, z: posZ },
-        },
-      };
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'tùy chỉnh vị trí đích'));
-    });
-
-    const onEndPosChange = () => {
-      const path = this.pathStore.getActivePath();
-      if (!path || this.isInternalUpdate) return;
-      const x = MathUtils.round(parseFloat(this.inputEndPosX.value) || 0, 2);
-      const y = MathUtils.round(parseFloat(this.inputEndPosY.value) || 0, 2);
-      const z = MathUtils.round(parseFloat(this.inputEndPosZ.value) || 0, 2);
-
-      const next: CameraPath = {
-        ...path,
-        useCustomEndPosition: true,
-        endPosition: { x, y, z },
-        endOrientation: {
-          ...(path.endOrientation || { mode: 'hotspot' }),
-          useCustomPosition: true,
-          position: { x, y, z },
-        },
-      };
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'tọa độ vị trí đích'));
-    };
-
-    this.inputEndPosX.addEventListener('change', onEndPosChange);
-    this.inputEndPosY.addEventListener('change', onEndPosChange);
-    this.inputEndPosZ.addEventListener('change', onEndPosChange);
-
-    this.btnPathEndPosCurrent.addEventListener('click', () => {
-      const path = this.pathStore.getActivePath();
-      if (!path || !this.onGetCurrentCameraTransform) return;
-      const transform = this.onGetCurrentCameraTransform();
-      const pos = {
-        x: MathUtils.round(transform.position.x, 2),
-        y: MathUtils.round(transform.position.y, 2),
-        z: MathUtils.round(transform.position.z, 2),
-      };
-
-      const next: CameraPath = {
-        ...path,
-        useCustomEndPosition: true,
-        endPosition: pos,
-        endOrientation: {
-          ...(path.endOrientation || { mode: 'custom' }),
-          useCustomPosition: true,
-          position: pos,
-        },
-      };
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'lấy vị trí camera hiện tại'));
-    });
-
-    this.btnResetEndOrientToHotspot.addEventListener('click', () => {
-      const path = this.pathStore.getActivePath();
-      if (!path || this.isInternalUpdate) return;
-      const toHotspot = this.hotspotStore.getById(path.toHotspotId);
-      const hYaw = toHotspot?.rotation?.y || 0;
-      const hPitch = toHotspot?.rotation?.x || 0;
-      const hRoll = toHotspot?.rotation?.z || 0;
-      const hPos = toHotspot ? { x: toHotspot.position.x, y: toHotspot.position.y, z: toHotspot.position.z } : undefined;
-
-      const next: CameraPath = {
-        ...path,
-        useCustomEndPosition: false,
-        endPosition: hPos,
-        endOrientation: {
-          mode: 'hotspot',
-          useCustomPosition: false,
-          position: hPos,
-          yaw: hYaw,
-          pitch: hPitch,
-          roll: hRoll,
-          transitionDuration: path.endOrientation?.transitionDuration ?? 2.0,
-          easing: path.endOrientation?.easing ?? 'easeInOut',
-        },
-      };
-
-      this.history.execute(new UpdatePathCommand(this.pathStore, path, next, 'khôi phục theo hotspot đích'));
+      if (toHotspot) {
+        this.hotspotStore.select(toHotspot.id);
+        document.getElementById('tab-mode-hotspots')?.click();
+      }
     });
 
     this.btnDeletePath.addEventListener('click', () => {
@@ -534,76 +368,29 @@ export class PathPropertyPanel {
       this.pathWarningsBox.style.display = 'none';
     }
 
-    // End Position fields
+    // Destination Hotspot sync information
     const toHotspot = this.hotspotStore.getById(path.toHotspotId);
-    const hasCustomPos = Boolean(path.useCustomEndPosition || path.endOrientation?.useCustomPosition);
-    this.chkPathEndCustomPos.checked = hasCustomPos;
-    this.boxPathEndPosFields.style.display = hasCustomPos ? 'flex' : 'none';
+    const destNameEl = document.getElementById('path-dest-hotspot-name');
+    if (destNameEl) {
+      if (toHotspot) {
+        let viewStr = ' (Chưa đặt hướng nhìn)';
+        if (toHotspot.cameraView?.configured) {
+          const posStr = toHotspot.cameraView.useCustomPosition ? ' + Vị trí riêng' : '';
+          viewStr = ` (Yaw ${Math.round(toHotspot.cameraView.yaw)}°, Pit ${Math.round(toHotspot.cameraView.pitch)}°${posStr})`;
+        }
+        destNameEl.textContent = `${toHotspot.name}${viewStr}`;
+      } else {
+        destNameEl.textContent = 'Chưa chọn Hotspot đích';
+      }
+    }
 
-    const endPos = (hasCustomPos && (path.endPosition || path.endOrientation?.position))
-      ? (path.endPosition || path.endOrientation!.position!)
-      : (toHotspot?.position || { x: 0, y: 0, z: 0 });
-
-    this.inputEndPosX.value = String(MathUtils.round(endPos.x, 2));
-    this.inputEndPosY.value = String(MathUtils.round(endPos.y, 2));
-    this.inputEndPosZ.value = String(MathUtils.round(endPos.z, 2));
-
-    // End Orientation fields
     const end = path.endOrientation || { mode: 'hotspot' };
-    this.selectEndMode.value = end.mode || 'hotspot';
-    const isCustom = end.mode === 'custom';
-    this.boxEndCustomFields.style.display = isCustom ? 'flex' : 'none';
-
-    const yawVal = end.yaw !== undefined ? end.yaw : (toHotspot?.rotation?.y || 0);
-    const pitchVal = end.pitch !== undefined ? end.pitch : (toHotspot?.rotation?.x || 0);
-    const rollVal = end.roll !== undefined ? end.roll : (toHotspot?.rotation?.z || 0);
-
-    this.inputEndYaw.value = String(MathUtils.round(yawVal, 1));
-    this.inputEndPitch.value = String(MathUtils.round(pitchVal, 1));
-    this.inputEndRoll.value = String(MathUtils.round(rollVal, 1));
-
     const transDur = end.transitionDuration !== undefined ? end.transitionDuration : 2.0;
     this.sliderEndTransition.value = String(transDur);
     this.valEndTransition.textContent = `${transDur}s`;
     this.selectEndEasing.value = end.easing || 'easeInOut';
 
     this.isInternalUpdate = false;
-  }
-
-  public updateEndOrientationValues(yaw: number, pitch: number, roll: number = 0): void {
-    this.isInternalUpdate = true;
-    this.inputEndYaw.value = String(MathUtils.round(yaw, 1));
-    this.inputEndPitch.value = String(MathUtils.round(pitch, 1));
-    this.inputEndRoll.value = String(MathUtils.round(roll, 1));
-    this.isInternalUpdate = false;
-  }
-
-  public updateEndTransformValues(
-    pos: { x: number; y: number; z: number } | null,
-    yaw: number,
-    pitch: number,
-    roll: number = 0
-  ): void {
-    this.isInternalUpdate = true;
-    if (pos) {
-      this.inputEndPosX.value = String(MathUtils.round(pos.x, 2));
-      this.inputEndPosY.value = String(MathUtils.round(pos.y, 2));
-      this.inputEndPosZ.value = String(MathUtils.round(pos.z, 2));
-    }
-    this.inputEndYaw.value = String(MathUtils.round(yaw, 1));
-    this.inputEndPitch.value = String(MathUtils.round(pitch, 1));
-    this.inputEndRoll.value = String(MathUtils.round(roll, 1));
-    this.isInternalUpdate = false;
-  }
-
-  public setOnStartAlignEndOrientation(callback: () => void): void {
-    this.onStartAlignEndOrientation = callback;
-  }
-
-  public setOnGetCurrentCameraTransform(
-    callback: () => { position: { x: number; y: number; z: number }; yaw: number; pitch: number; roll: number }
-  ): void {
-    this.onGetCurrentCameraTransform = callback;
   }
 
   private renderWaypointFields(wp: CameraWaypoint): void {

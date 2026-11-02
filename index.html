@@ -46,6 +46,20 @@
         </div>
 
         <div class="topbar-center">
+          <!-- PRIMARY VIEW MODE TOGGLE (Biên tập vs Xem trước Preview) -->
+          <div class="view-mode-toggle" id="view-mode-toggle">
+            <button class="view-mode-btn active" id="btn-view-mode-edit" title="Chế độ Biên tập: Chỉnh sửa Hotspot, Waypoint & Tuyến Camera">
+              <i data-lucide="edit-3"></i>
+              <span>Biên tập</span>
+            </button>
+            <button class="view-mode-btn" id="btn-view-mode-preview" title="Chế độ Xem trước (Preview): Nhấn marker để camera tự tìm đường và bay thực tế">
+              <i data-lucide="play"></i>
+              <span>Xem trước (Preview)</span>
+            </button>
+          </div>
+
+          <div class="topbar-divider"></div>
+
           <div class="mode-switcher-tabs" id="mode-switcher-tabs">
             <button class="mode-tab-btn active" id="tab-mode-hotspots" title="Chế độ biên tập Hotspot">
               <i data-lucide="map-pin"></i>
@@ -54,6 +68,10 @@
             <button class="mode-tab-btn path-mode" id="tab-mode-paths" title="Chế độ thiết kế Tuyến Camera">
               <i data-lucide="route"></i>
               <span>Tuyến Camera</span>
+            </button>
+            <button class="mode-tab-btn graph-mode" id="tab-mode-graph" title="Chế độ Quản lý Mạng Waypoint Toàn cục (Global Waypoint Graph)">
+              <i data-lucide="network"></i>
+              <span>Mạng Waypoint</span>
             </button>
           </div>
 
@@ -77,13 +95,25 @@
               <i data-lucide="plus-circle"></i>
               <span>Thêm Waypoint</span>
             </button>
-            <button class="btn btn-secondary" id="btn-set-end-orient-topbar" style="border-color: rgba(139, 92, 246, 0.5); color: #c4b5fd;" title="Đặt hướng nhìn camera tại điểm cuối (Viewport Alignment)">
-              <i data-lucide="compass"></i>
-              <span>Đặt hướng nhìn cuối</span>
+            <button class="btn btn-secondary" id="btn-preview-path-topbar" title="Chạy thử chuyển động camera của tuyến này (Phím cách Space)">
+              <i data-lucide="play-circle"></i>
+              <span>Chạy thử tuyến</span>
             </button>
-            <button class="btn btn-secondary" id="btn-preview-path-topbar" title="Xem trước chuyển động camera (Phím cách Space)">
-              <i data-lucide="play"></i>
-              <span>Xem trước</span>
+          </div>
+
+          <!-- GLOBAL WAYPOINT GRAPH ACTIONS (Active in Mạng Waypoint mode) -->
+          <div id="topbar-graph-actions" style="display: none; align-items: center; gap: 8px;">
+            <button class="btn btn-primary" id="btn-add-global-wp-topbar" style="background: #0ea5e9; border-color: #0ea5e9; box-shadow: 0 0 12px rgba(14, 165, 233, 0.4);" title="Thêm Waypoint toàn cục (Nhấp trên mô hình 3D)">
+              <i data-lucide="plus-circle"></i>
+              <span>Thêm Waypoint</span>
+            </button>
+            <button class="btn btn-secondary" id="btn-auto-connect-topbar" style="border-color: rgba(14, 165, 233, 0.4); color: #38bdf8;" title="Tự động dò tìm và đề xuất kết nối an toàn cho các waypoint lân cận">
+              <i data-lucide="sparkles"></i>
+              <span>Tự động liên kết</span>
+            </button>
+            <button class="btn btn-secondary" id="btn-diagnose-graph-topbar" title="Chẩn đoán và kiểm tra toàn diện tính liên thông của mạng">
+              <i data-lucide="stethoscope"></i>
+              <span>Kiểm tra mạng</span>
             </button>
           </div>
           <div class="topbar-divider"></div>
@@ -114,6 +144,10 @@
               <button class="dropdown-item" id="btn-export-json">
                 <i data-lucide="download"></i>
                 <span>Xuất file JSON</span>
+              </button>
+              <button class="dropdown-item" id="btn-export-glb-bundle">
+                <i data-lucide="package"></i>
+                <span>Xuất file GLB đóng gói</span>
               </button>
               <button class="dropdown-item" id="btn-import-json-trigger">
                 <i data-lucide="upload"></i>
@@ -239,12 +273,96 @@
               <!-- Rendered dynamically -->
             </div>
           </div>
+
+          <!-- PANEL GLOBAL WAYPOINT GRAPH (Active in Mạng Waypoint mode) -->
+          <div id="panel-graph-content" style="display: none; height: 100%; flex-direction: column;">
+            <div class="panel-header">
+              <div class="panel-title">
+                <i data-lucide="network"></i>
+                <span>Mạng Waypoint</span>
+                <span class="count-badge" id="graph-wp-count-badge" style="background: #0ea5e9; color: #fff;">0</span>
+                <span class="count-badge" id="graph-edge-count-badge" style="background: #10b981; color: #fff;" title="Số cạnh liên kết">0 cạnh</span>
+              </div>
+              <div class="panel-header-actions">
+                <button class="btn-icon-sm" id="btn-diagnose-graph-left" title="Chẩn đoán mạng toàn diện">
+                  <i data-lucide="stethoscope"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="panel-search-bar">
+              <div class="search-input-wrapper">
+                <i data-lucide="search" class="search-icon"></i>
+                <input type="text" id="graph-search-input" placeholder="Tìm waypoint theo tên, khu vực..." />
+              </div>
+              <div class="filter-row">
+                <select id="graph-filter-select" class="select-sm">
+                  <option value="all">Tất cả Waypoint</option>
+                  <option value="connected">Đã có liên kết</option>
+                  <option value="isolated">Điểm cô lập (0 cạnh)</option>
+                  <option value="draft">Bản nháp</option>
+                </select>
+                <button class="btn btn-xs btn-primary" id="btn-add-global-wp-left" style="background: #0ea5e9; border-color: #0ea5e9; white-space: nowrap;">+ Waypoint</button>
+              </div>
+            </div>
+
+            <!-- AUTO CONNECT SETTINGS COLLAPSIBLE -->
+            <div class="path-selector-box" id="graph-autoconnect-box" style="background: rgba(14, 165, 233, 0.05); border-bottom: 1px solid var(--border-subtle); padding: 8px 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <span style="font-size: 11px; font-weight: 600; color: #38bdf8;">Tự động liên kết an toàn:</span>
+                <button class="btn btn-xs btn-secondary" id="btn-run-autoconnect" style="font-size: 10px; padding: 2px 8px; border-color: #0ea5e9; color: #38bdf8;">Chạy ngay</button>
+              </div>
+              <div style="display: flex; gap: 8px; font-size: 11px; color: var(--text-muted);">
+                <div style="flex: 1;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>Bán kính:</span>
+                    <span id="val-autoconnect-radius" style="color: var(--text-main); font-weight: 600;">8m</span>
+                  </div>
+                  <input type="range" id="prop-autoconnect-radius" min="3" max="15" step="1" value="8" style="width: 100%;" />
+                </div>
+                <div style="flex: 1;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>Cao độ:</span>
+                    <span id="val-autoconnect-height" style="color: var(--text-main); font-weight: 600;">1.5m</span>
+                  </div>
+                  <input type="range" id="prop-autoconnect-height" min="0.5" max="3" step="0.5" value="1.5" style="width: 100%;" />
+                </div>
+              </div>
+            </div>
+
+            <div class="waypoint-chain-list" id="graph-waypoint-list" style="flex: 1; overflow-y: auto; padding: 8px 10px;">
+              <!-- Waypoint items rendered dynamically -->
+            </div>
+          </div>
         </aside>
 
         <!-- CENTER 3D VIEWPORT -->
         <section class="viewport-container" id="viewport-container">
           <div id="canvas-3d-wrapper" class="canvas-3d-wrapper"></div>
           <div id="css2d-wrapper" class="css2d-wrapper"></div>
+
+          <!-- FLOATING GRAPH OVERLAY TOGGLE -->
+          <button class="btn-graph-overlay-toggle" id="btn-toggle-graph-overlay" title="Bật/Tắt hiển thị Mạng Waypoint toàn cục (Phím N)">
+            <i data-lucide="network"></i>
+            <span>Mạng Waypoint</span>
+          </button>
+
+          <!-- NAVIGATION FLIGHT HUD (When Camera Navigator is Flying) -->
+          <div class="navigation-flight-hud" id="navigation-flight-hud" style="display: none;">
+            <div class="flight-hud-content">
+              <div class="flight-hud-badge">
+                <i data-lucide="compass" class="spin-slow"></i>
+                <div class="flight-hud-text">
+                  <span class="flight-hud-title">Đang điều hướng camera</span>
+                  <strong class="flight-hud-dest" id="flight-hud-dest-name">...</strong>
+                </div>
+              </div>
+              <button class="btn btn-sm btn-danger" id="btn-stop-flight" title="Dừng điều hướng ngay lập tức (Phím Esc)">
+                <i data-lucide="square"></i>
+                <span>Dừng lại</span>
+              </button>
+            </div>
+          </div>
 
           <!-- PLACEMENT CROSSHAIR HUD (When Add Hotspot is Active) -->
           <div class="placement-hud" id="placement-hud" style="display: none;">
@@ -281,6 +399,31 @@
                 <span>Về Hotspot đích</span>
               </button>
               <button class="btn btn-sm btn-ghost" id="btn-cancel-end-orient-hud" title="Hủy thao tác">Hủy (Esc)</button>
+            </div>
+          </div>
+
+          <!-- EDGE QUICK-ACTION FLOATING HUD -->
+          <div class="placement-hud edge-selected-hud" id="edge-selected-hud" style="display: none; background: #0f1117fa; border-color: #38bdf8; box-shadow: 0 0 24px rgba(56, 189, 248, 0.45); gap: 12px; padding: 6px 14px; max-width: 90%;">
+            <div class="placement-badge" style="color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+              <i data-lucide="git-commit"></i>
+              <span id="hud-edge-title" style="font-weight: 600;">Cạnh liên kết: ...</span>
+            </div>
+            <div id="hud-edge-status-pill" style="display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 3px 10px; border-radius: 999px; font-weight: 600; border: 1px solid transparent;">
+              ...
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <button class="btn btn-sm btn-primary" id="btn-hud-confirm-edge-safe" style="background: #10b981; border-color: #10b981; font-weight: 600;" title="Cưỡng chế chấp thuận an toàn">
+                <i data-lucide="shield-check"></i>
+                <span>Cưỡng chế an toàn</span>
+              </button>
+              <button class="btn btn-sm btn-secondary" id="btn-hud-retest-edge" title="Quét lại tia va chạm">
+                <i data-lucide="scan"></i>
+                <span>Quét lại tia</span>
+              </button>
+              <button class="btn btn-sm btn-danger btn-icon-xs" id="btn-hud-delete-edge" title="Xóa cạnh này" style="height: 28px; width: 28px;">
+                <i data-lucide="trash-2"></i>
+              </button>
+              <button class="btn btn-sm btn-ghost" id="btn-hud-close-edge" title="Bỏ chọn">✕</button>
             </div>
           </div>
 
@@ -394,8 +537,8 @@
         <aside class="sidebar sidebar-right" id="sidebar-right">
           <div class="panel-header">
             <div class="panel-title">
-              <i data-lucide="sliders"></i>
-              <span>Thuộc tính Hotspot</span>
+              <i data-lucide="sliders" id="sidebar-right-icon"></i>
+              <span id="sidebar-right-title">Thuộc tính Hotspot</span>
             </div>
             <button class="btn-icon-sm" id="btn-toggle-right-panel" title="Thu gọn">
               <i data-lucide="panel-right-close"></i>
@@ -462,7 +605,33 @@
                   </div>
                 </div>
 
-                <div class="section-subtitle">Góc xoay hướng nhìn (Độ)</div>
+                <div class="section-subtitle" style="display: flex; align-items: center; justify-content: space-between; margin-top: 14px;">
+                  <span>Hướng nhìn & Vị trí Camera chuẩn</span>
+                  <span id="badge-hotspot-cam-status" class="status-pill status-pill-amber" style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);">Chưa đặt</span>
+                </div>
+
+                <!-- Action buttons for Hotspot Camera View -->
+                <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;">
+                  <button type="button" class="btn btn-secondary btn-sm" id="btn-align-hotspot-view" style="width: 100%; justify-content: center; background: rgba(139, 92, 246, 0.15); border-color: rgba(139, 92, 246, 0.4); color: #c4b5fd;" title="Mở khung căn chỉnh 3D trực quan bằng camera để thiết lập vị trí & hướng nhìn chuẩn cho Hotspot này">
+                    <i data-lucide="compass"></i>
+                    <span>Thiết lập hướng nhìn đích (3D)</span>
+                  </button>
+
+                  <div style="display: flex; gap: 6px;">
+                    <button type="button" class="btn btn-secondary btn-xs" id="btn-capture-hotspot-view" style="flex: 1; font-size: 11px;" title="Chụp nhanh vị trí & góc nhìn camera hiện tại">
+                      <i data-lucide="camera"></i>
+                      <span>Chụp góc này</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-xs" id="btn-preview-hotspot-view" style="flex: 1; font-size: 11px;" title="Đưa camera tới đúng góc nhìn chuẩn đã lưu">
+                      <i data-lucide="eye"></i>
+                      <span>Xem góc chuẩn</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs" id="btn-reset-hotspot-view" style="color: var(--text-muted); font-size: 11px;" title="Đặt lại góc nhìn tự do (không ép góc xoay)">
+                      <i data-lucide="rotate-ccw"></i>
+                    </button>
+                  </div>
+                </div>
+
                 <div class="coords-grid">
                   <div class="coord-item">
                     <span class="coord-label">Yaw</span>
@@ -626,93 +795,37 @@
               <!-- DESTINATION ORIENTATION & TRANSFORM SECTION -->
               <div class="inspector-section">
                 <div class="section-title">
-                  <span>Vị trí & Hướng nhìn Điểm cuối (End Transform)</span>
+                  <span>Hướng nhìn & Vị trí Kết thúc (End Transform)</span>
                 </div>
 
-                <!-- Always visible button to align end transform in viewport -->
-                <button type="button" class="btn btn-secondary" id="btn-align-end-orient-viewport" style="width: 100%; margin-bottom: 12px; background: rgba(139, 92, 246, 0.2); border: 1px solid var(--accent-purple); color: #ffffff; font-weight: 600; padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 12px rgba(139, 92, 246, 0.25); border-radius: var(--radius-md); cursor: pointer;">
-                  <i data-lucide="compass" style="width: 16px; height: 16px; color: #c4b5fd;"></i>
-                  <span>Lướt tự do & Căn điểm cuối 3D</span>
-                </button>
-
-                <!-- Checkbox to enable custom end camera position -->
-                <div class="form-group" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-                  <input type="checkbox" id="chk-path-end-custom-pos" style="accent-color: var(--accent-purple); cursor: pointer;" />
-                  <label for="chk-path-end-custom-pos" style="cursor: pointer; font-size: 12px; font-weight: 500; color: #e2e8f0; margin-bottom: 0;">Tùy chỉnh vị trí camera đích (Position)</label>
-                </div>
-
-                <!-- Custom End Position Controls -->
-                <div id="path-end-pos-fields" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 12px; background: rgba(255,255,255,0.03); padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 11px; color: var(--text-muted); font-weight: 500;">Tọa độ camera đích:</span>
-                    <button type="button" class="btn btn-ghost btn-xs" id="btn-path-end-pos-current" style="font-size: 11px; padding: 2px 6px; color: #38bdf8; display: flex; align-items: center; gap: 4px;" title="Lấy tọa độ vị trí camera hiện tại trong viewport">
-                      <i data-lucide="crosshair" style="width: 12px; height: 12px;"></i>
-                      <span>Lấy vị trí hiện tại</span>
-                    </button>
+                <!-- Destination Hotspot Sync Notice -->
+                <div class="form-group" style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.25); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px;">
+                  <div style="font-size: 11px; color: #c4b5fd; display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                    <i data-lucide="info" style="width: 14px; height: 14px;"></i>
+                    <span>Tự động đồng bộ từ Hotspot đích:</span>
                   </div>
-                  <div class="coords-grid">
-                    <div class="coord-item">
-                      <span class="coord-label axis-x">X</span>
-                      <input type="number" id="prop-path-end-pos-x" class="coord-input" step="0.05" value="0" />
-                    </div>
-                    <div class="coord-item">
-                      <span class="coord-label axis-y">Y</span>
-                      <input type="number" id="prop-path-end-pos-y" class="coord-input" step="0.05" value="0" />
-                    </div>
-                    <div class="coord-item">
-                      <span class="coord-label axis-z">Z</span>
-                      <input type="number" id="prop-path-end-pos-z" class="coord-input" step="0.05" value="0" />
-                    </div>
-                  </div>
-                </div>
-
-                <div class="form-group">
-                  <label for="prop-path-end-mode">Chế độ hướng nhìn đích</label>
-                  <select id="prop-path-end-mode" class="select-text">
-                    <option value="hotspot">Theo Hotspot đích (Mặc định)</option>
-                    <option value="custom">Tùy chỉnh góc nhìn riêng cho tuyến</option>
-                    <option value="followPath">Theo hướng di chuyển (Follow Path)</option>
-                  </select>
-                </div>
-
-                <!-- Custom End Orientation Controls -->
-                <div id="path-end-orient-custom-fields" style="display: none; flex-direction: column; gap: 10px;">
-                  <div class="coords-grid">
-                    <div class="coord-item">
-                      <span class="coord-label axis-y" title="Góc xoay ngang Yaw (0 - 360)">Yaw</span>
-                      <input type="number" id="prop-path-end-yaw" class="coord-input" min="0" max="360" step="1" value="0" />
-                    </div>
-                    <div class="coord-item">
-                      <span class="coord-label axis-x" title="Góc ngẩng/cúi Pitch (-85 đến 85)">Pit</span>
-                      <input type="number" id="prop-path-end-pitch" class="coord-input" min="-85" max="85" step="1" value="0" />
-                    </div>
-                    <div class="coord-item">
-                      <span class="coord-label axis-z" title="Góc nghiêng Roll">Rol</span>
-                      <input type="number" id="prop-path-end-roll" class="coord-input" min="-180" max="180" step="1" value="0" />
-                    </div>
-                  </div>
-
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <div class="label-with-val">
-                      <label for="prop-path-end-transition">Thời lượng xoay về đích (giây)</label>
-                      <span class="val-preview" id="val-path-end-transition">2.0s</span>
-                    </div>
-                    <input type="range" id="prop-path-end-transition" min="0.5" max="5.0" step="0.25" value="2.0" class="range-slider" />
-                  </div>
-
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <label for="prop-path-end-easing">Độ mượt xoay (Blend Easing)</label>
-                    <select id="prop-path-end-easing" class="select-text">
-                      <option value="easeInOut">Ease In-Out (Mượt mà)</option>
-                      <option value="easeOut">Ease Out (Chậm dần về đích)</option>
-                      <option value="linear">Linear (Đều đặn)</option>
-                    </select>
-                  </div>
-
-                  <button type="button" class="btn btn-ghost btn-sm" id="btn-reset-end-orient-to-hotspot" style="align-self: flex-start; font-size: 11px; color: var(--text-muted);">
-                    <i data-lucide="rotate-ccw"></i>
-                    <span>Khôi phục theo Hotspot đích</span>
+                  <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 6px;" id="path-dest-hotspot-name">Theo Hotspot đích</div>
+                  <button type="button" class="btn btn-secondary btn-xs" id="btn-edit-dest-hotspot-orient" style="width: 100%; justify-content: center; font-size: 11px;">
+                    <i data-lucide="compass"></i>
+                    <span>Chỉnh sửa trên Hotspot đích</span>
                   </button>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 8px;">
+                  <div class="label-with-val">
+                    <label for="prop-path-end-transition">Thời lượng xoay về đích (giây)</label>
+                    <span class="val-preview" id="val-path-end-transition">2.0s</span>
+                  </div>
+                  <input type="range" id="prop-path-end-transition" min="0.5" max="5.0" step="0.25" value="2.0" class="range-slider" />
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label for="prop-path-end-easing">Độ mượt xoay (Blend Easing)</label>
+                  <select id="prop-path-end-easing" class="select-text">
+                    <option value="easeInOut">Ease In-Out (Mượt mà)</option>
+                    <option value="easeOut">Ease Out (Chậm dần về đích)</option>
+                    <option value="linear">Linear (Đều đặn)</option>
+                  </select>
                 </div>
               </div>
 
@@ -803,6 +916,168 @@
                 <button class="btn btn-danger" id="btn-wp-delete" style="grid-column: span 2;">
                   <i data-lucide="trash-2"></i>
                   <span>Xóa waypoint này</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANEL GRAPH INSPECTOR (Active in Mạng Waypoint Mode) -->
+          <div id="panel-graph-inspector" style="display: none; height: 100%; flex-direction: column;" class="inspector-scroll">
+            <!-- Empty state -->
+            <div class="empty-state-card" id="graph-inspector-empty">
+              <i data-lucide="network" class="empty-icon"></i>
+              <p class="empty-title">Chưa chọn Waypoint hoặc Cạnh</p>
+              <p class="empty-desc">Nhấp chọn một Waypoint hoặc Cạnh kết nối trong không gian 3D để xem và chỉnh sửa thông số.</p>
+            </div>
+
+            <!-- WAYPOINT INSPECTOR FORM -->
+            <div class="inspector-form" id="graph-wp-inspector-form" style="display: none;">
+              <div class="inspector-section">
+                <div class="section-title">Thông tin Waypoint Toàn Cục</div>
+                <div class="form-group">
+                  <label for="prop-graph-wp-name">Tên Waypoint</label>
+                  <input type="text" id="prop-graph-wp-name" class="input-text" placeholder="e.g. Hành lang P1" />
+                </div>
+                <div class="form-group">
+                  <label for="prop-graph-wp-id">ID duy nhất</label>
+                  <input type="text" id="prop-graph-wp-id" class="input-text monospace" readonly />
+                </div>
+                <div class="form-group">
+                  <label for="prop-graph-wp-zone">Khu vực / Phòng</label>
+                  <input type="text" id="prop-graph-wp-zone" class="input-text" placeholder="e.g. Phòng khách, Sảnh chính" />
+                </div>
+                <div class="form-row-2col">
+                  <div class="form-group">
+                    <label for="prop-graph-wp-floor">Tầng</label>
+                    <input type="number" id="prop-graph-wp-floor" class="input-text" value="1" min="1" />
+                  </div>
+                  <div class="form-group">
+                    <label for="prop-graph-wp-status">Trạng thái</label>
+                    <select id="prop-graph-wp-status" class="select-text">
+                      <option value="active">Hoạt động (Active)</option>
+                      <option value="draft">Bản nháp (Draft)</option>
+                      <option value="disabled">Vô hiệu hóa</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="inspector-section">
+                <div class="section-title">Tọa độ không gian (X, Y, Z)</div>
+                <div class="coords-grid">
+                  <div class="coord-item">
+                    <span class="coord-label axis-x">X</span>
+                    <input type="number" id="prop-graph-wp-pos-x" step="0.01" class="coord-input" />
+                  </div>
+                  <div class="coord-item">
+                    <span class="coord-label axis-y">Y</span>
+                    <input type="number" id="prop-graph-wp-pos-y" step="0.01" class="coord-input" />
+                  </div>
+                  <div class="coord-item">
+                    <span class="coord-label axis-z">Z</span>
+                    <input type="number" id="prop-graph-wp-pos-z" step="0.01" class="coord-input" />
+                  </div>
+                </div>
+                <div class="form-row-toggles" style="margin-top: 10px;">
+                  <label class="toggle-control">
+                    <input type="checkbox" id="prop-graph-wp-locked" />
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-label">Khóa vị trí (Tránh kéo nhầm)</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- CONNECTED EDGES SECTION -->
+              <div class="inspector-section">
+                <div class="section-title">Các Cạnh Liên Kết (Neighbors)</div>
+                <div id="graph-wp-neighbors-list" style="margin-bottom: 8px;">
+                  <!-- List of neighbors -->
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <select id="prop-graph-connect-target" class="select-text select-sm" style="flex: 1; font-size: 11px;">
+                    <option value="">(Chọn điểm cần nối)</option>
+                  </select>
+                  <button class="btn btn-sm btn-secondary" id="btn-create-edge-manual" style="white-space: nowrap; font-size: 11px;">+ Nối</button>
+                </div>
+              </div>
+
+              <div class="inspector-actions">
+                <button class="btn btn-secondary" id="btn-graph-wp-duplicate">
+                  <i data-lucide="copy"></i>
+                  <span>Nhân bản</span>
+                </button>
+                <button class="btn btn-danger" id="btn-graph-wp-delete">
+                  <i data-lucide="trash-2"></i>
+                  <span>Xóa</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- EDGE INSPECTOR FORM -->
+            <div class="inspector-form" id="graph-edge-inspector-form" style="display: none;">
+              <div class="inspector-section">
+                <div class="section-title">Thuộc tính Cạnh Liên Kết</div>
+                <div style="padding: 10px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); margin-bottom: 12px;">
+                  <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Điểm A:</div>
+                  <strong id="prop-edge-from-name" style="font-size: 13px; color: var(--text-main);">...</strong>
+                  <div style="font-size: 11px; color: var(--text-muted); margin: 6px 0 4px;">Điểm B:</div>
+                  <strong id="prop-edge-to-name" style="font-size: 13px; color: var(--text-main);">...</strong>
+                </div>
+
+                <div id="prop-edge-admin-badge" style="display: none; padding: 6px 10px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; font-size: 11px; color: #10b981; margin-bottom: 12px; font-weight: 500;">
+                  <i data-lucide="shield-check" style="width: 13px; height: 13px; vertical-align: middle; margin-right: 4px;"></i>
+                  <span>Đã cưỡng chế chấp thuận an toàn</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="prop-edge-direction">Chiều di chuyển</label>
+                  <select id="prop-edge-direction" class="select-text">
+                    <option value="bidirectional">Hai chiều (A ⇄ B)</option>
+                    <option value="unidirectional">Một chiều (A → B)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="prop-edge-status">Trạng thái liên kết</label>
+                  <select id="prop-edge-status" class="select-text">
+                    <option value="valid">Hợp lệ / An toàn (Valid)</option>
+                    <option value="needs_confirmation">Cần xác nhận (Needs Confirmation)</option>
+                    <option value="blocked">Bị chặn / Xuyên tường (Blocked)</option>
+                    <option value="untested">Chưa kiểm tra (Untested)</option>
+                  </select>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+                  <div style="background: var(--bg-surface); padding: 8px; border-radius: 4px; text-align: center;">
+                    <div style="font-size: 10px; color: var(--text-muted);">Khoảng cách</div>
+                    <strong id="prop-edge-distance" style="color: #0ea5e9;">0.00m</strong>
+                  </div>
+                  <div style="background: var(--bg-surface); padding: 8px; border-radius: 4px; text-align: center;">
+                    <div style="font-size: 10px; color: var(--text-muted);">Thời gian ước tính</div>
+                    <strong id="prop-edge-duration" style="color: #10b981;">0.0s</strong>
+                  </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 10px;">
+                  <label for="prop-edge-cost-weight">Hệ số chi phí (Cost Weight)</label>
+                  <input type="number" id="prop-edge-cost-weight" step="0.1" min="0.1" value="1.0" class="input-text" />
+                </div>
+              </div>
+
+              <div class="inspector-actions" style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; gap: 6px; width: 100%;">
+                  <button class="btn btn-secondary btn-sm" id="btn-retest-edge-collision" style="flex: 1;" title="Quét lại va chạm xuyên tường">
+                    <i data-lucide="scan"></i>
+                    <span>Quét lại tia</span>
+                  </button>
+                  <button class="btn btn-primary btn-sm" id="btn-confirm-edge-safe" style="flex: 1; background: #10b981; border-color: #10b981; font-weight: 600;" title="Cưỡng chế chấp thuận cạnh này là an toàn khi mắt nhìn thấy thông thoáng">
+                    <i data-lucide="shield-check"></i>
+                    <span>Cưỡng chế an toàn</span>
+                  </button>
+                </div>
+                <button class="btn btn-danger btn-sm" id="btn-delete-edge" style="width: 100%;">
+                  <i data-lucide="trash-2"></i>
+                  <span>Xóa cạnh này</span>
                 </button>
               </div>
             </div>
@@ -1002,6 +1277,57 @@
               <i data-lucide="check"></i>
               <span>Tạo tuyến</span>
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. GRAPH DIAGNOSTICS & TEST ROUTE MODAL -->
+      <div class="modal-backdrop" id="modal-graph-diagnostics" style="display: none;">
+        <div class="modal-card modal-lg">
+          <div class="modal-header">
+            <div class="modal-title">
+              <i data-lucide="stethoscope" style="color: #0ea5e9;"></i>
+              <span>Chẩn Đoán Mạng Waypoint & Thử Nghiệm Tìm Đường</span>
+            </div>
+            <button class="btn-close-modal" id="btn-close-diagnostics-modal">&times;</button>
+          </div>
+          <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+            <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+              <button class="btn btn-secondary btn-sm" id="btn-run-full-audit">
+                <i data-lucide="refresh-cw"></i>
+                <span>Quét lại toàn mạng</span>
+              </button>
+            </div>
+
+            <!-- DIAGNOSTICS REPORT CONTENT -->
+            <div id="diagnostics-modal-content">
+              <!-- Rendered dynamically -->
+            </div>
+
+            <div class="dropdown-divider" style="margin: 20px 0;"></div>
+
+            <!-- INTERACTIVE ROUTE TEST SECTION -->
+            <div style="background: var(--bg-surface); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              <div style="font-weight: 600; font-size: 14px; color: var(--text-main); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="compass" style="color: #0ea5e9;"></i>
+                <span>Thử nghiệm thuật toán tìm đường (A* Simulation)</span>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                <div class="form-group">
+                  <label for="diag-test-start">Điểm xuất phát (Start)</label>
+                  <select id="diag-test-start" class="select-text"></select>
+                </div>
+                <div class="form-group">
+                  <label for="diag-test-dest">Hotspot đích (Destination)</label>
+                  <select id="diag-test-dest" class="select-text"></select>
+                </div>
+              </div>
+              <button class="btn btn-primary" id="btn-run-test-route" style="width: 100%; justify-content: center; background: #0ea5e9; border-color: #0ea5e9;">
+                <i data-lucide="play"></i>
+                <span>Thử tìm đường & Vẽ quỹ đạo 3D</span>
+              </button>
+              <div id="diag-test-result" style="margin-top: 10px;"></div>
+            </div>
           </div>
         </div>
       </div>

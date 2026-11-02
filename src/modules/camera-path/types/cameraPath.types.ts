@@ -1,4 +1,4 @@
-import { Vector3D } from '../../hotspots/types/hotspot.types';
+import type { Vector3D } from '../../hotspots/types/hotspot.types.ts';
 
 export type WaypointOrientationMode = 'followPath' | 'manual' | 'lookAt';
 export type TerminalOrientationMode = 'hotspot' | 'custom' | 'followPath';
@@ -25,10 +25,15 @@ export interface WaypointOrientation {
   lookAtTarget?: Vector3D;    // Target coordinate if mode === 'lookAt'
 }
 
+export type WaypointStatus = 'active' | 'draft' | 'disabled';
+
 export interface CameraWaypoint {
   id: string;                 // UUID
   name: string;               // e.g. "Điểm rẽ P1", "Hành lang P2"
   position: Vector3D;         // 3D world coordinate
+  zone?: string;              // Area / Room identifier (e.g. "Phòng khách", "Sảnh")
+  floor?: number;             // Floor index (default 1)
+  status?: WaypointStatus;    // 'active' | 'draft' | 'disabled'
   orientation: WaypointOrientation;
   locked: boolean;            // Locked against gizmo drag
   dwellTimeSeconds: number;   // Pause duration at this waypoint (default 0)
@@ -49,10 +54,12 @@ export interface CameraPath {
   easing: CameraPathEasing;
   bidirectional: boolean;     // Enable reverse traversal
   enabled: boolean;
-  endPosition?: Vector3D;     // Custom end position override
-  useCustomEndPosition?: boolean; // Whether end position is overridden
+  /** @deprecated Target camera position now belongs to destination Hotspot. Kept for legacy fallback. */
+  endPosition?: Vector3D;
+  useCustomEndPosition?: boolean;
   startOrientation?: PathTerminalOrientation; // Optional start camera orientation
-  endOrientation?: PathTerminalOrientation;   // End Camera Orientation
+  /** @deprecated Target camera orientation now belongs to destination Hotspot. Kept for legacy fallback. */
+  endOrientation?: PathTerminalOrientation;
   warnings?: string[];        // Collision or wall-clipping warnings
   createdAt: string;
   updatedAt: string;

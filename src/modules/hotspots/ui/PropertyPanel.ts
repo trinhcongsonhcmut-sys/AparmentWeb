@@ -45,14 +45,24 @@ export class PropertyPanel {
   private currentItem: HotspotItem | null = null;
   private isInternalUpdate: boolean = false;
 
+  private onStartAlignCameraView?: (item: HotspotItem) => void;
+  private onCaptureCurrentCameraView?: (item: HotspotItem) => void;
+  private onPreviewCameraView?: (item: HotspotItem) => void;
+
   constructor(
     store: HotspotStore,
     history: CommandHistory,
-    onConfirmDelete?: (item: HotspotItem) => void
+    onConfirmDelete?: (item: HotspotItem) => void,
+    onStartAlignCameraView?: (item: HotspotItem) => void,
+    onCaptureCurrentCameraView?: (item: HotspotItem) => void,
+    onPreviewCameraView?: (item: HotspotItem) => void
   ) {
     this.store = store;
     this.history = history;
     this.onConfirmDelete = onConfirmDelete;
+    this.onStartAlignCameraView = onStartAlignCameraView;
+    this.onCaptureCurrentCameraView = onCaptureCurrentCameraView;
+    this.onPreviewCameraView = onPreviewCameraView;
 
     this.emptyState = document.getElementById('inspector-empty-state')!;
     this.formContainer = document.getElementById('inspector-form')!;
@@ -137,22 +147,66 @@ export class PropertyPanel {
     this.inputPosY.addEventListener('change', onCoordChange);
     this.inputPosZ.addEventListener('change', onCoordChange);
 
-    // Rotation numeric changes
+    // Camera View & Rotation numeric changes
     const onRotChange = () => {
       if (!this.currentItem || this.isInternalUpdate) return;
       const rotY = parseFloat(this.inputRotY.value) || 0;
       const rotX = parseFloat(this.inputRotX.value) || 0;
       const rotZ = parseFloat(this.inputRotZ.value) || 0;
-      const next = {
+      const next: HotspotItem = {
         ...this.currentItem,
         rotation: { x: Math.round(rotX), y: Math.round(rotY), z: Math.round(rotZ) },
+        cameraView: {
+          ...(this.currentItem.cameraView || { configured: true, yaw: 0, pitch: 0, roll: 0 }),
+          configured: true,
+          yaw: Math.round(rotY),
+          pitch: Math.round(rotX),
+          roll: Math.round(rotZ),
+        },
       };
-      this.history.execute(new UpdateHotspotCommand(this.store, this.currentItem, next, 'góc xoay'));
+      this.history.execute(new UpdateHotspotCommand(this.store, this.currentItem, next, 'hướng nhìn camera'));
     };
 
     this.inputRotY.addEventListener('change', onRotChange);
     this.inputRotX.addEventListener('change', onRotChange);
     this.inputRotZ.addEventListener('change', onRotChange);
+
+    // Camera View Action Buttons
+    document.getElementById('btn-align-hotspot-view')?.addEventListener('click', () => {
+      if (!this.currentItem) return;
+      this.onStartAlignCameraView?.(this.currentItem);
+    });
+
+    document.getElementById('btn-capture-hotspot-view')?.addEventListener('click', () => {
+      if (!this.currentItem) return;
+      this.onCaptureCurrentCameraView?.(this.currentItem);
+    });
+
+    document.getElementById('btn-preview-hotspot-view')?.addEventListener('click', () => {
+      if (!this.currentItem) return;
+      this.onPreviewCameraView?.(this.currentItem);
+    });
+
+    document.getElementById('btn-reset-hotspot-view')?.addEventListener('click', () => {
+      if (!this.currentItem) return;
+      const next: HotspotItem = {
+        ...this.currentItem,
+        rotation: { x: 0, y: 0, z: 0 },
+        cameraView: {
+          configured: false,
+          useCustomPosition: false,
+          cameraPosition: undefined,
+          yaw: 0,
+          pitch: 0,
+          roll: 0,
+        },
+      };
+      this.history.execute(new UpdateHotspotCommand(this.store, this.currentItem, next, 'đặt lại góc nhìn tự do'));
+      EventBus.getInstance().emit(EditorEvents.SHOW_TOAST, {
+        type: 'info',
+        message: `Đã đặt lại "${this.currentItem.name}" về góc nhìn tự do (không ép góc xoay).`,
+      });
+    });
 
     // Color presets
     const presetButtons = document.querySelectorAll('.color-preset');
@@ -252,7 +306,7 @@ export class PropertyPanel {
     this.isInternalUpdate = false;
   }
 
-  private updateFromStore(): void {
+  public updateFromStore(): void {
     const item = this.store.getSelectedItem();
     this.currentItem = item ? JSON.parse(JSON.stringify(item)) : null;
 
@@ -279,6 +333,22 @@ export class PropertyPanel {
     this.inputRotY.value = String(item.rotation.y || 0);
     this.inputRotX.value = String(item.rotation.x || 0);
     this.inputRotZ.value = String(item.rotation.z || 0);
+
+    const camStatusBadge = document.getElementById('badge-hotspot-cam-status');
+    if (camStatusBadge) {
+      if (item.cameraView?.configured) {
+        const customPosStr = item.cameraView.useCustomPosition ? ' + Tọa độ đứng riêng' : '';
+        camStatusBadge.textContent = `Đã đặt (Yaw: ${Math.round(item.cameraView.yaw)}°, Pit: ${Math.round(item.cameraView.pitch)}°${customPosStr})`;
+        camStatusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+        camStatusBadge.style.color = '#34d399';
+        camStatusBadge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+      } else {
+        camStatusBadge.textContent = 'Chưa đặt (Tự do)';
+        camStatusBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+        camStatusBadge.style.color = '#fbbf24';
+        camStatusBadge.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+      }
+    }
 
     this.inputColor.value = item.marker.color || '#00e5ff';
     this.inputSize.value = String(item.marker.size || 1.0);

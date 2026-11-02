@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { HotspotItem } from '../types/hotspot.types';
+import type { HotspotItem } from '../types/hotspot.types.ts';
 
 export class HotspotMarker2D {
-  public readonly hotspot: HotspotItem;
+  public hotspot: HotspotItem;
   public readonly anchor: THREE.Object3D;
   public readonly css2dObject: CSS2DObject;
   public readonly element: HTMLElement;
@@ -26,6 +26,15 @@ export class HotspotMarker2D {
     this.anchor.name = `HotspotAnchor_${hotspot.id}`;
     this.anchor.position.set(hotspot.position.x, hotspot.position.y, hotspot.position.z);
     this.anchor.add(this.css2dObject);
+
+    // 3D Raycast Hit Target for reliable clicking in WebGL viewport
+    const hitMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 12, 12),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    );
+    hitMesh.name = `HotspotPicker_${hotspot.id}`;
+    hitMesh.userData = { type: 'hotspot_picker', hotspotId: hotspot.id };
+    this.anchor.add(hitMesh);
 
     // Apply initial state
     this.updateFromItem(hotspot, 1);
@@ -77,6 +86,9 @@ export class HotspotMarker2D {
   }
 
   public updateFromItem(item: HotspotItem, index: number): void {
+    // Keep reference in sync with latest store data
+    this.hotspot = item;
+
     // Position
     this.anchor.position.set(item.position.x, item.position.y, item.position.z);
 

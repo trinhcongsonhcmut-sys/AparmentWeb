@@ -683,6 +683,7 @@
 /* DROPDOWN MENU */
 .dropdown-container {
   position: relative;
+  z-index: 101;
 }
 
 .dropdown-menu {
@@ -693,12 +694,12 @@
   background: var(--bg-panel-solid);
   border: 1px solid var(--border-active);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  min-width: 180px;
-  padding: 4px;
+  box-shadow: var(--shadow-lg), 0 0 16px rgba(0, 0, 0, 0.5);
+  min-width: 190px;
+  padding: 6px;
   display: none;
   flex-direction: column;
-  z-index: 200;
+  z-index: 1000;
 }
 
 .dropdown-menu.show {
@@ -765,3 +766,123 @@
 .toast.success { border-color: var(--accent-emerald); }
 .toast.warning { border-color: var(--accent-amber); }
 .toast.error { border-color: var(--accent-rose); }
+
+/* VIEW MODE TOGGLE (Biên tập vs Điều hướng) */
+.view-mode-toggle {
+  display: flex;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 3px;
+  backdrop-filter: blur(8px);
+}
+
+.view-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.view-mode-btn:hover {
+  color: var(--text-main);
+}
+
+.view-mode-btn.active {
+  background: var(--accent-cyan);
+  color: #0b1120;
+  font-weight: 600;
+  box-shadow: 0 0 12px var(--accent-cyan-glow);
+}
+
+.view-mode-btn#btn-view-mode-preview {
+  color: #34d399;
+}
+
+.view-mode-btn#btn-view-mode-preview:hover {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.view-mode-btn#btn-view-mode-preview.active {
+  background: #10b981;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+}
+
+/* NAVIGATION FLIGHT HUD */
+.navigation-flight-hud {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  pointer-events: auto;
+  animation: hud-flight-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes hud-flight-in {
+  from { opacity: 0; transform: translate(-50%, -15px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.flight-hud-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid #10b981;
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-full);
+  padding: 6px 10px 6px 18px;
+  backdrop-filter: blur(12px);
+}
+
+.flight-hud-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flight-hud-badge i {
+  color: #10b981;
+  width: 18px;
+  height: 18px;
+}
+
+.flight-hud-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.flight-hud-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.flight-hud-dest {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

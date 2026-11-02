@@ -1,11 +1,12 @@
-import {
+import type {
   CameraPath,
   CameraWaypoint,
   CameraPathCurveType,
   CameraPathEasing,
-} from '../types/cameraPath.types';
-import { MathUtils } from '../../../shared/math/MathUtils';
-import { EventBus, EditorEvents } from '../../../shared/events/EventBus';
+} from '../types/cameraPath.types.ts';
+import { WaypointGraphStore } from './WaypointGraphStore.ts';
+import { MathUtils } from '../../../shared/math/MathUtils.ts';
+import { EventBus, EditorEvents } from '../../../shared/events/EventBus.ts';
 
 export type PathStoreChangeListener = () => void;
 
@@ -18,6 +19,7 @@ export class CameraPathStore {
 
   private listeners: Set<PathStoreChangeListener> = new Set();
   private eventBus: EventBus = EventBus.getInstance();
+  private graphStore: WaypointGraphStore = WaypointGraphStore.getInstance();
 
   constructor() {
     //
@@ -116,9 +118,7 @@ export class CameraPathStore {
   public deletePath(id: string, markDirty: boolean = true): CameraPath | null {
     const existing = this.paths.get(id);
     if (existing) {
-      for (const wpId of existing.waypointIds) {
-        this.waypoints.delete(wpId);
-      }
+      // Note: Waypoints belong to the Global Waypoint Library/Graph, do NOT delete them!
       this.paths.delete(id);
       if (this.activePathId === id) {
         this.activePathId = this.paths.size > 0 ? Array.from(this.paths.keys())[0] : null;
@@ -130,6 +130,25 @@ export class CameraPathStore {
       return existing;
     }
     return null;
+  }
+
+  public getPathsUsingWaypoint(wpId: string): CameraPath[] {
+    return Array.from(this.paths.values()).filter((p) => p.waypointIds.includes(wpId));
+  }
+
+  public removeWaypointFromAllPaths(wpId: string, markDirty: boolean = true): void {
+    let affected = false;
+    for (const path of this.paths.values()) {
+      if (path.waypointIds.includes(wpId)) {
+        path.waypointIds = path.waypointIds.filter((id) => id !== wpId);
+        path.updatedAt = new Date().toISOString();
+        affected = true;
+      }
+    }
+    if (affected) {
+      if (markDirty) this.setDirty(true);
+      this.notify();
+    }
   }
 
   public duplicatePath(id: string): CameraPath | null {
@@ -224,15 +243,19 @@ export class CameraPathStore {
 
   // --- WAYPOINT METHODS ---
   public getAllWaypoints(): CameraWaypoint[] {
-    return Array.from(this.waypoints.values());
+    const combined = new Map<string, CameraWaypoint>(this.waypoints);
+    for (const wp of this.graphStore.getAllWaypoints()) {
+      combined.set(wp.id, wp);
+    }
+    return Array.from(combined.values());
   }
 
   public getWaypoint(id: string): CameraWaypoint | undefined {
-    return this.waypoints.get(id);
+    return this.waypoints.get(id) || this.graphStore.getWaypoint(id);
   }
 
   public getSelectedWaypoint(): CameraWaypoint | null {
-    return this.selectedWaypointId ? this.waypoints.get(this.selectedWaypointId) || null : null;
+    return this.selectedWaypointId ? this.getWaypoint(this.selectedWaypointId) || null : null;
   }
 
   public getSelectedWaypointId(): string | null {
@@ -244,7 +267,7 @@ export class CameraPathStore {
     this.selectedWaypointId = id;
     this.notify();
     if (id) {
-      this.eventBus.emit('waypoint:selected', this.waypoints.get(id));
+      this.eventBus.emit('waypoint:selected', this.getWaypoint(id));
     } else {
       this.eventBus.emit('waypoint:deselected');
     }
@@ -254,7 +277,7 @@ export class CameraPathStore {
     const path = this.paths.get(pathId);
     if (!path) return [];
     return path.waypointIds
-      .map((id) => this.waypoints.get(id))
+      .map((id) => this.getWaypoint(id))
       .filter((wp): wp is CameraWaypoint => !!wp);
   }
 
@@ -265,6 +288,9 @@ export class CameraPathStore {
     markDirty: boolean = true
   ): void {
     this.waypoints.set(wp.id, wp);
+    if (!this.graphStore.getWaypoint(wp.id)) {
+      this.graphStore.addWaypoint(wp, markDirty);
+    }
 
     const targetPathId = pathId || this.activePathId;
     if (targetPathId) {
@@ -289,6 +315,7 @@ export class CameraPathStore {
     const isNew = !this.waypoints.has(wp.id);
     wp.updatedAt = new Date().toISOString();
     this.waypoints.set(wp.id, wp);
+    this.graphStore.updateWaypoint(wp, markDirty);
     if (markDirty) this.setDirty(true);
     this.notify();
     this.eventBus.emit(isNew ? 'waypoint:created' : 'waypoint:updated', wp);

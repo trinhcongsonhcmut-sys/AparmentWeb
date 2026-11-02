@@ -1,14 +1,16 @@
 import * as THREE from 'three';
-import {
+import type {
   CameraPath,
   CameraWaypoint,
   EvaluatedTransform,
   CameraPathEasing,
 } from '../types/cameraPath.types';
-import { HotspotItem, Vector3D } from '../../hotspots/types/hotspot.types';
-import { MathUtils } from '../../../shared/math/MathUtils';
+import type { HotspotItem, Vector3D } from '../../hotspots/types/hotspot.types';
+import { MathUtils } from '../../../shared/math/MathUtils.ts';
+import { SmoothRotationService } from './SmoothRotationService.ts';
 
 export class PathTrajectoryEvaluator {
+  private smoothRotation: SmoothRotationService = SmoothRotationService.getInstance();
   private curve: THREE.Curve<THREE.Vector3> | null = null;
   private pathLength: number = 0;
   private nodePositions: THREE.Vector3[] = [];
@@ -70,6 +72,16 @@ export class PathTrajectoryEvaluator {
   }
 
   public getResolvedEndPosition(path: CameraPath): THREE.Vector3 | null {
+    // 1. Primary Source of Truth: Destination Hotspot cameraView custom position
+    if (
+      this.toHotspot?.cameraView?.useCustomPosition &&
+      this.toHotspot.cameraView.cameraPosition
+    ) {
+      const p = this.toHotspot.cameraView.cameraPosition;
+      return new THREE.Vector3(p.x, p.y, p.z);
+    }
+
+    // 2. Legacy fallback from CameraPath
     if (
       (path.useCustomEndPosition || path.endOrientation?.useCustomPosition) &&
       (path.endPosition || path.endOrientation?.position)
@@ -77,6 +89,8 @@ export class PathTrajectoryEvaluator {
       const p = path.endPosition || path.endOrientation!.position!;
       return new THREE.Vector3(p.x, p.y, p.z);
     }
+
+    // 3. Hotspot surface position
     if (this.toHotspot) {
       return new THREE.Vector3(this.toHotspot.position.x, this.toHotspot.position.y, this.toHotspot.position.z);
     }
@@ -127,22 +141,34 @@ export class PathTrajectoryEvaluator {
   }
 
   public eulerToQuaternion(yawDeg: number, pitchDeg: number, rollDeg: number = 0): THREE.Quaternion {
-    const yawRad = THREE.MathUtils.degToRad(yawDeg);
-    const pitchRad = THREE.MathUtils.degToRad(pitchDeg);
-    const rollRad = THREE.MathUtils.degToRad(rollDeg);
-    return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitchRad, yawRad, rollRad, 'YXZ'));
+    return this.smoothRotation.eulerToQuaternion(yawDeg, pitchDeg, rollDeg);
   }
 
   public directionToQuaternion(dir: THREE.Vector3): THREE.Quaternion {
-    const normalized = dir.clone().normalize();
-    const pitch = Math.asin(Math.max(-1, Math.min(1, normalized.y)));
-    const yaw = Math.atan2(-normalized.x, -normalized.z);
-    return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+    return this.smoothRotation.directionToQuaternion(dir);
   }
 
   public getEndQuaternion(path: CameraPath): THREE.Quaternion | null {
-    const endMode = path.endOrientation?.mode || 'hotspot';
+    // 1. PRIMARY SOURCE OF TRUTH: Destination Hotspot cameraView
+    if (this.toHotspot?.cameraView?.configured) {
+      return this.eulerToQuaternion(
+        this.toHotspot.cameraView.yaw || 0,
+        this.toHotspot.cameraView.pitch || 0,
+        this.toHotspot.cameraView.roll || 0
+      );
+    }
 
+    // 2. Fallback: Destination Hotspot rotation if non-zero
+    if (this.toHotspot?.rotation && (this.toHotspot.rotation.x !== 0 || this.toHotspot.rotation.y !== 0)) {
+      return this.eulerToQuaternion(
+        this.toHotspot.rotation.y || 0,
+        this.toHotspot.rotation.x || 0,
+        this.toHotspot.rotation.z || 0
+      );
+    }
+
+    // 3. Fallback: Legacy CameraPath endOrientation (if unmigrated)
+    const endMode = path.endOrientation?.mode;
     if (endMode === 'custom' && path.endOrientation?.yaw !== undefined) {
       return this.eulerToQuaternion(
         path.endOrientation.yaw || 0,
@@ -151,30 +177,11 @@ export class PathTrajectoryEvaluator {
       );
     }
 
-    if (endMode === 'hotspot') {
-      if (this.toHotspot?.rotation) {
-        return this.eulerToQuaternion(
-          this.toHotspot.rotation.y || 0,
-          this.toHotspot.rotation.x || 0,
-          this.toHotspot.rotation.z || 0
-        );
-      }
-    }
-
     if (endMode === 'followPath') {
       if (this.curve) {
         const endTangent = this.curve.getTangentAt(1.0).normalize();
         return this.directionToQuaternion(endTangent);
       }
-    }
-
-    // Default fallback to destination hotspot rotation if present
-    if (this.toHotspot?.rotation && (this.toHotspot.rotation.x || this.toHotspot.rotation.y)) {
-      return this.eulerToQuaternion(
-        this.toHotspot.rotation.y || 0,
-        this.toHotspot.rotation.x || 0,
-        this.toHotspot.rotation.z || 0
-      );
     }
 
     return null;
@@ -226,7 +233,7 @@ export class PathTrajectoryEvaluator {
         const alpha = Math.max(0, Math.min(1, (u - uTurn) / (1.0 - uTurn)));
         const blendEasing = path.endOrientation?.easing || 'easeInOut';
         const easedAlpha = this.applyEasing(alpha, blendEasing as any);
-        qBase.slerp(qEnd, easedAlpha);
+        qBase = this.smoothRotation.shortestPathSlerp(qBase, qEnd, easedAlpha);
       }
     }
 

@@ -1,8 +1,10 @@
-import { ProjectConfigSchema, ModelInfoMeta } from '../types/config.types';
-import { HotspotStore } from '../../hotspots/store/HotspotStore';
-import { CameraPathStore } from '../../camera-path/store/CameraPathStore';
-import { ModelFingerprint } from '../../../core/loaders/ModelFingerprint';
-import { MathUtils } from '../../../shared/math/MathUtils';
+import type { ProjectConfigSchema, ModelInfoMeta } from '../types/config.types.ts';
+import { HotspotStore } from '../../hotspots/store/HotspotStore.ts';
+import { CameraPathStore } from '../../camera-path/store/CameraPathStore.ts';
+import { WaypointGraphStore } from '../../camera-path/store/WaypointGraphStore.ts';
+import { OrientationMigrationService } from '../../camera-path/services/OrientationMigrationService.ts';
+import { ModelFingerprint } from '../../../core/loaders/ModelFingerprint.ts';
+import { MathUtils } from '../../../shared/math/MathUtils.ts';
 
 export interface ImportValidationResult {
   valid: boolean;
@@ -19,16 +21,24 @@ export class ConfigStorageService {
     store: HotspotStore,
     modelMeta: ModelInfoMeta,
     pathStore?: CameraPathStore,
+    graphStore?: WaypointGraphStore,
     projectName: string = 'Dự án Căn hộ 3D'
   ): string {
+    const activeGraphStore = graphStore || WaypointGraphStore.getInstance();
+    const waypoints = activeGraphStore.getAllWaypoints().length > 0
+      ? activeGraphStore.getAllWaypoints()
+      : (pathStore ? pathStore.getAllWaypoints() : []);
+    const waypointEdges = activeGraphStore.getAllEdges();
+
     const config: ProjectConfigSchema = {
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.3.0',
       projectId: MathUtils.simpleHash(modelMeta.fingerprint),
       projectName,
       updatedAt: new Date().toISOString(),
       modelInfo: modelMeta,
       hotspots: store.getAll(),
-      waypoints: pathStore ? pathStore.getAllWaypoints() : [],
+      waypoints,
+      waypointEdges,
       cameraPaths: pathStore ? pathStore.getAllPaths() : [],
       settings: {
         markerOcclusion: false,
@@ -91,10 +101,26 @@ export class ConfigStorageService {
       }
     }
 
+    // Auto-migration to v1.2.0 if older version or cameraView missing
+    let finalConfig: ProjectConfigSchema = parsed as ProjectConfigSchema;
+    if (parsed.schemaVersion === '1.0.0' || parsed.schemaVersion === '1.1.0' || parsed.hotspots.some((h: any) => !h.cameraView)) {
+      const { migratedConfig, result } = OrientationMigrationService.migrateConfig(parsed);
+      finalConfig = migratedConfig;
+      if (result.conflicts.length > 0) {
+        warning = (warning ? warning + '\n' : '') + result.summary;
+      }
+    }
+
+    // Upgrade to v1.3.0
+    finalConfig.schemaVersion = '1.3.0';
+    if (!finalConfig.waypointEdges) {
+      finalConfig.waypointEdges = [];
+    }
+
     return {
       valid: true,
       isModelCompatible: isCompatible,
-      config: parsed as ProjectConfigSchema,
+      config: finalConfig,
       warning,
     };
   }
@@ -102,10 +128,11 @@ export class ConfigStorageService {
   public static saveToLocalStorage(
     store: HotspotStore,
     modelMeta: ModelInfoMeta,
-    pathStore?: CameraPathStore
+    pathStore?: CameraPathStore,
+    graphStore?: WaypointGraphStore
   ): void {
     try {
-      const json = this.exportToJson(store, modelMeta, pathStore);
+      const json = this.exportToJson(store, modelMeta, pathStore, graphStore);
       const key = `${this.STORAGE_KEY_PREFIX}${modelMeta.fingerprint}`;
       localStorage.setItem(key, json);
       // Also save last active key

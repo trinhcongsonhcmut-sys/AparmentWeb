@@ -1,6 +1,10 @@
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
-const html = fs.readFileSync('c:/ApartmentWeb/index.html', 'utf-8');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf-8');
 
 const idsToCheck = [
   'canvas-3d-wrapper',
@@ -79,6 +83,71 @@ const idsToCheck = [
   'btn-save-end-rot-hud',
   'btn-reset-end-orient-hud',
   'btn-cancel-end-orient-hud',
+  'path-dest-hotspot-name',
+  'btn-edit-dest-hotspot-orient',
+  'prop-path-end-transition',
+  'val-path-end-transition',
+  'prop-path-end-easing',
+  // GLOBAL WAYPOINT GRAPH DOM IDS
+  'tab-mode-graph',
+  'topbar-graph-actions',
+  'btn-add-global-wp-topbar',
+  'btn-auto-connect-topbar',
+  'btn-diagnose-graph-topbar',
+  'panel-graph-content',
+  'graph-wp-count-badge',
+  'graph-edge-count-badge',
+  'btn-diagnose-graph-left',
+  'graph-search-input',
+  'graph-filter-select',
+  'btn-add-global-wp-left',
+  'graph-autoconnect-box',
+  'btn-run-autoconnect',
+  'prop-autoconnect-radius',
+  'val-autoconnect-radius',
+  'prop-autoconnect-height',
+  'val-autoconnect-height',
+  'graph-waypoint-list',
+  'btn-toggle-graph-overlay',
+  'panel-graph-inspector',
+  'graph-inspector-empty',
+  'graph-wp-inspector-form',
+  'prop-graph-wp-name',
+  'prop-graph-wp-id',
+  'prop-graph-wp-zone',
+  'prop-graph-wp-floor',
+  'prop-graph-wp-status',
+  'prop-graph-wp-pos-x',
+  'prop-graph-wp-pos-y',
+  'prop-graph-wp-pos-z',
+  'prop-graph-wp-locked',
+  'graph-wp-neighbors-list',
+  'prop-graph-connect-target',
+  'btn-create-edge-manual',
+  'btn-graph-wp-duplicate',
+  'btn-graph-wp-delete',
+  'graph-edge-inspector-form',
+  'prop-edge-from-name',
+  'prop-edge-to-name',
+  'prop-edge-direction',
+  'prop-edge-status',
+  'prop-edge-distance',
+  'prop-edge-duration',
+  'prop-edge-cost-weight',
+  'btn-retest-edge-collision',
+  'btn-confirm-edge-safe',
+  'btn-delete-edge',
+  'modal-graph-diagnostics',
+  'btn-close-diagnostics-modal',
+  'btn-run-full-audit',
+  'diagnostics-modal-content',
+  'diag-test-start',
+  'diag-test-dest',
+  'btn-run-test-route',
+  'diag-test-result'
+];
+
+const idsRemoved = [
   'chk-path-end-custom-pos',
   'path-end-pos-fields',
   'btn-path-end-pos-current',
@@ -91,13 +160,11 @@ const idsToCheck = [
   'prop-path-end-yaw',
   'prop-path-end-pitch',
   'prop-path-end-roll',
-  'prop-path-end-transition',
-  'prop-path-end-easing',
   'btn-reset-end-orient-to-hotspot',
   'btn-set-end-orient-topbar'
 ];
 
-console.log('Checking all DOM elements by regex...');
+console.log('Checking required DOM elements by regex...');
 let missing = 0;
 for (const id of idsToCheck) {
   const re = new RegExp(`id=["']${id}["']`);
@@ -107,8 +174,18 @@ for (const id of idsToCheck) {
   }
 }
 
-if (missing === 0) {
-  console.log(`✅ All ${idsToCheck.length} element IDs exist in index.html!`);
+let erroneouslyPresent = 0;
+for (const id of idsRemoved) {
+  const re = new RegExp(`id=["']${id}["']`);
+  if (re.test(html)) {
+    console.error(`❌ ELEMENT SHOULD BE REMOVED BUT STILL PRESENT: #${id}`);
+    erroneouslyPresent++;
+  }
+}
+
+if (missing === 0 && erroneouslyPresent === 0) {
+  console.log(`✅ All ${idsToCheck.length} element IDs exist and all ${idsRemoved.length} deprecated path end-alignment elements are completely removed!`);
 } else {
-  console.log(`❌ ${missing} elements are missing!`);
+  console.log(`❌ Failures: ${missing} missing, ${erroneouslyPresent} erroneously present`);
+  process.exit(1);
 }

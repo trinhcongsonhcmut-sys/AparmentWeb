@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { MathUtils } from '../../shared/math/MathUtils';
-import { ModelInfoMeta } from '../../modules/config/types/config.types';
+import { MathUtils } from '../../shared/math/MathUtils.ts';
+import type { ModelInfoMeta } from '../../modules/config/types/config.types.ts';
 
 export class ModelFingerprint {
   public static compute(

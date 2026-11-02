@@ -54,7 +54,13 @@ export class PlaybackTimelineHUD {
       } else if (state === 'paused') {
         this.controller.resume();
       } else if (this.activePath && this.evaluator) {
-        this.controller.play(this.activePath, this.evaluator, parseFloat(this.slider.value) / 1000);
+        let p = parseFloat(this.slider.value) / 1000;
+        if (p >= 0.999) {
+          p = 0;
+          this.slider.value = '0';
+          this.timeDisplayCurrent.textContent = '00:00.0';
+        }
+        this.controller.play(this.activePath, this.evaluator, p);
       }
     });
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { SceneManager } from './core/engine/SceneManager';
 import { NavigationController } from './core/navigation/NavigationController';
 import { ModelLoaderService, LoadedModelResult } from './core/loaders/ModelLoaderService';
@@ -11,6 +12,7 @@ import { CommandHistory } from './shared/history/CommandHistory';
 import { AddHotspotCommand } from './modules/hotspots/commands/AddHotspotCommand';
 import { DeleteHotspotCommand } from './modules/hotspots/commands/DeleteHotspotCommand';
 import { MoveHotspotCommand } from './modules/hotspots/commands/MoveHotspotCommand';
+import { UpdateHotspotCommand } from './modules/hotspots/commands/UpdateHotspotCommand';
 import { HotspotListPanel } from './modules/hotspots/ui/HotspotListPanel';
 import { PropertyPanel } from './modules/hotspots/ui/PropertyPanel';
 import { CandidateModal } from './modules/hotspots/ui/CandidateModal';
@@ -37,9 +39,22 @@ import { AddWaypointCommand } from './modules/camera-path/commands/AddWaypointCo
 import { MoveWaypointCommand } from './modules/camera-path/commands/MoveWaypointCommand';
 import { CreatePathCommand } from './modules/camera-path/commands/CreatePathCommand';
 import { UpdatePathCommand } from './modules/camera-path/commands/UpdatePathCommand';
-import { PathTerminalOrientation } from './modules/camera-path/types/cameraPath.types';
+import { CameraNavigator } from './core/navigation/CameraNavigator';
+import { CameraPathfindingService } from './modules/camera-path/services/CameraPathfindingService';
 
-export type EditorMode = 'hotspots' | 'paths';
+// GLOBAL WAYPOINT GRAPH IMPORTS
+import { WaypointGraphStore } from './modules/camera-path/store/WaypointGraphStore';
+import { GlobalGraphVisualizer } from './modules/camera-path/components/GlobalGraphVisualizer';
+import { GraphPanel } from './modules/camera-path/ui/GraphPanel';
+import { GraphPropertyPanel } from './modules/camera-path/ui/GraphPropertyPanel';
+import { GraphDiagnosticsModal } from './modules/camera-path/ui/GraphDiagnosticsModal';
+import { GraphDiagnosticsService } from './modules/camera-path/services/GraphDiagnosticsService';
+import { AddGlobalWaypointCommand } from './modules/camera-path/commands/AddGlobalWaypointCommand';
+import { MoveGlobalWaypointCommand } from './modules/camera-path/commands/MoveGlobalWaypointCommand';
+import { UpdateEdgeCommand } from './modules/camera-path/commands/UpdateEdgeCommand';
+import { DeleteEdgeCommand } from './modules/camera-path/commands/DeleteEdgeCommand';
+
+export type EditorMode = 'hotspots' | 'paths' | 'graph';
 
 export class EditorApp {
   private sceneManager!: SceneManager;
@@ -70,8 +85,24 @@ export class EditorApp {
   private pathPropertyPanel!: PathPropertyPanel;
   private timelineHUD!: PlaybackTimelineHUD;
 
+  // Global Waypoint Graph Subsystems
+  private graphStore: WaypointGraphStore = WaypointGraphStore.getInstance();
+  private graphVisualizer!: GlobalGraphVisualizer;
+  private graphPanel!: GraphPanel;
+  private graphPropertyPanel!: GraphPropertyPanel;
+  private graphDiagnosticsModal!: GraphDiagnosticsModal;
+  private diagnosticsService: GraphDiagnosticsService = GraphDiagnosticsService.getInstance();
+  private pathfindingService: CameraPathfindingService = new CameraPathfindingService();
+  private isPlacingGlobalWaypoint: boolean = false;
+
   // Active Editor Mode
   private activeMode: EditorMode = 'hotspots';
+  private viewMode: 'edit' | 'preview' = 'edit';
+
+  // Camera Navigator (A* Pathfinding & Intelligent Flight)
+  private cameraNavigator!: CameraNavigator;
+  private flightHud!: HTMLElement;
+  private flightHudDestName!: HTMLElement;
 
   private activeMarkers: Map<string, HotspotMarker2D> = new Map();
   private currentModelMeta: ModelInfoMeta | null = null;
@@ -83,6 +114,7 @@ export class EditorApp {
 
   // End Orientation & Transform Alignment
   private isAligningEndOrientation: boolean = false;
+  private aligningTargetHotspotId: string | null = null;
   private endOrientHud!: HTMLElement;
   private endOrientCameraSnapshot: {
     position: THREE.Vector3;
@@ -145,7 +177,37 @@ export class EditorApp {
             if (wp) {
               wp.position = { x: MathUtils.round(pos.x, 2), y: MathUtils.round(pos.y, 2), z: MathUtils.round(pos.z, 2) };
               this.pathPropertyPanel.updateWaypointCoords(wp.position);
-              this.syncActivePathVisuals();
+
+              const activePath = this.pathStore.getActivePath();
+              if (activePath) {
+                const fromH = this.store.getById(activePath.fromHotspotId);
+                const toH = this.store.getById(activePath.toHotspotId);
+                const wps = this.pathStore.getWaypointsForPath(activePath.id);
+                this.trajectoryEvaluator.buildTrajectory(activePath, wps, fromH, toH);
+
+                // Update only trajectory line geometry, keep anchor reference intact
+                this.pathVisualizer.updateTrajectoryOnly(activePath, this.trajectoryEvaluator, toH);
+
+                const warnings = this.collisionChecker.checkPath(
+                  activePath,
+                  this.trajectoryEvaluator,
+                  this.sceneManager.currentModelGroup
+                );
+                activePath.warnings = warnings;
+              }
+            }
+          } else if (this.activeMode === 'graph') {
+            const wp = this.graphStore.getSelectedWaypoint();
+            if (wp && !wp.locked) {
+              wp.position = { x: MathUtils.round(pos.x, 2), y: MathUtils.round(pos.y, 2), z: MathUtils.round(pos.z, 2) };
+              this.graphPropertyPanel.updateCoords(wp.position);
+              this.graphStore.recalculateConnectedEdgeDistances(wp.id);
+              this.graphVisualizer.updateEdgeEndpointsForWaypoint(
+                wp.id,
+                pos,
+                this.graphStore.getAllEdges(),
+                this.graphStore.getAllWaypoints()
+              );
             }
           }
         },
@@ -173,6 +235,23 @@ export class EditorApp {
               const oldP = MathUtils.roundVector(prevPos, 2);
               const newP = MathUtils.roundVector(newPos, 2);
               this.history.execute(new MoveWaypointCommand(this.pathStore, wp.id, oldP, newP, wp.orientation, wp.orientation));
+              this.pathStore.setDirty(true);
+              this.syncActivePathVisuals();
+              const anchor = this.pathVisualizer.getAnchor(wp.id);
+              if (anchor) this.gizmoManager.attach(anchor);
+            }
+          } else if (this.activeMode === 'graph') {
+            const wp = this.graphStore.getSelectedWaypoint();
+            if (wp && !wp.locked) {
+              const oldP = MathUtils.roundVector(prevPos, 2);
+              const newP = MathUtils.roundVector(newPos, 2);
+              this.history.execute(new MoveGlobalWaypointCommand(this.graphStore, wp.id, oldP, newP));
+              this.updateGraphVisuals();
+              const mesh = this.graphVisualizer.getWaypointMesh(wp.id);
+              if (mesh) {
+                this.gizmoManager.attach(mesh);
+                document.getElementById('gizmo-mode-toolbar')!.style.display = 'flex';
+              }
             }
           }
         },
@@ -184,10 +263,43 @@ export class EditorApp {
       this.pathStore.selectWaypoint(wpId);
     });
 
+    // 4.1. Initialize Intelligent Camera Navigator
+    this.flightHud = document.getElementById('navigation-flight-hud')!;
+    this.flightHudDestName = document.getElementById('flight-hud-dest-name')!;
+
+    this.cameraNavigator = new CameraNavigator(
+      this.sceneManager.camera,
+      this.navController.orbitControls,
+      this.sceneManager.currentModelGroup,
+      {
+        onFlightStart: ({ targetName }) => {
+          this.flightHudDestName.textContent = targetName;
+          this.flightHud.style.display = 'block';
+          if ((window as any).lucide) (window as any).lucide.createIcons();
+        },
+        onFlightComplete: ({ targetName }) => {
+          this.flightHud.style.display = 'none';
+          this.toastNotification.show(`Đã đến "${targetName}"`, 'success');
+        },
+        onFlightCancelled: () => {
+          this.flightHud.style.display = 'none';
+          this.toastNotification.show('Đã dừng điều hướng camera', 'info');
+        },
+        onNotification: (msg, type) => {
+          this.toastNotification.show(msg, type === 'danger' ? 'error' : (type as any));
+        },
+      }
+    );
+
+    document.getElementById('btn-stop-flight')?.addEventListener('click', () => {
+      this.cameraNavigator.stop();
+    });
+
     // Add SceneManager update callback
     this.sceneManager.addUpdateCallback((delta) => {
       this.navController.update(delta);
       this.playbackController.update(delta);
+      this.cameraNavigator.update(delta);
     });
 
     // 5. UI Helpers & Panels
@@ -199,9 +311,16 @@ export class EditorApp {
       this.promptDeleteHotspots(items);
     });
 
-    this.propertyPanel = new PropertyPanel(this.store, this.history, (item) => {
-      this.promptDeleteHotspots([item]);
-    });
+    this.propertyPanel = new PropertyPanel(
+      this.store,
+      this.history,
+      (item) => {
+        this.promptDeleteHotspots([item]);
+      },
+      (item) => this.startAligningHotspotCameraView(item),
+      (item) => this.captureCurrentCameraViewForHotspot(item),
+      (item) => this.previewHotspotCameraView(item)
+    );
 
     // Camera Path Panels
     this.pathListPanel = new PathListPanel(
@@ -215,10 +334,161 @@ export class EditorApp {
     this.pathPropertyPanel = new PathPropertyPanel(
       this.pathStore,
       this.store,
-      this.history,
-      () => this.startAligningEndOrientation()
+      this.history
     );
-    this.pathPropertyPanel.setOnGetCurrentCameraTransform(() => this.getCurrentCameraTransform());
+
+    // Global Waypoint Graph Visualizer & Panels
+    this.graphVisualizer = new GlobalGraphVisualizer(this.sceneManager.scene);
+
+    this.graphPanel = new GraphPanel(
+      this.graphStore,
+      this.pathStore,
+      this.history,
+      {
+        onAddWaypointRequested: () => this.setGlobalWaypointPlacementMode(true),
+        onDiagnoseRequested: () => this.graphDiagnosticsModal.show(),
+        onLocateWaypoint: (wp) => {
+          this.navController.flyTo(
+            new THREE.Vector3(wp.position.x, wp.position.y + 1.2, wp.position.z + 2.5),
+            new THREE.Vector3(wp.position.x, wp.position.y, wp.position.z),
+            1.2
+          );
+        },
+        onRunAutoConnect: (radius, height) => {
+          const res = this.graphStore.proposeConnections(
+            { maxDistance: radius, maxHeightDiff: height, bidirectional: true },
+            (p1, p2) => this.pathfindingService.isLineSafe(p1, p2, this.sceneManager.currentModelGroup, 0.25)
+          );
+          this.updateGraphVisuals();
+          this.toastNotification.show(
+            `Đã quét và tạo ${res.proposedCount} liên kết (${res.validCount} an toàn, ${res.blockedCount} bị chặn)!`,
+            res.validCount > 0 ? 'success' : 'info'
+          );
+        },
+      }
+    );
+
+    this.graphPropertyPanel = new GraphPropertyPanel(
+      this.graphStore,
+      this.pathStore,
+      this.history,
+      {
+        onRetestEdge: (edge) => {
+          const wpA = this.graphStore.getWaypoint(edge.fromWaypointId);
+          const wpB = this.graphStore.getWaypoint(edge.toWaypointId);
+          if (wpA && wpB) {
+            const pA = new THREE.Vector3(wpA.position.x, wpA.position.y, wpA.position.z);
+            const pB = new THREE.Vector3(wpB.position.x, wpB.position.y, wpB.position.z);
+            const safe = this.pathfindingService.isLineSafe(pA, pB, this.sceneManager.currentModelGroup, 0.25);
+            const oldEdge = JSON.parse(JSON.stringify(edge));
+            edge.status = safe ? 'valid' : 'blocked';
+            edge.confirmedByAdmin = safe;
+            this.history.execute(new UpdateEdgeCommand(this.graphStore, oldEdge, edge));
+            this.updateGraphVisuals();
+            this.updateEdgeHud();
+            this.toastNotification.show(
+              safe ? 'Tia thông thoáng! Cạnh đã được đánh dấu an toàn.' : 'Tia bị va chạm tường/vật cản!',
+              safe ? 'success' : 'warning'
+            );
+          }
+        },
+        onEdgeAdminConfirmed: (edge) => {
+          const wpA = this.graphStore.getWaypoint(edge.fromWaypointId);
+          const wpB = this.graphStore.getWaypoint(edge.toWaypointId);
+          const nameA = wpA ? wpA.name : edge.fromWaypointId.slice(0, 6);
+          const nameB = wpB ? wpB.name : edge.toWaypointId.slice(0, 6);
+          this.toastNotification.show(
+            `Đã cưỡng chế chấp thuận an toàn cho cạnh "${nameA} ⇄ ${nameB}"!`,
+            'success'
+          );
+          this.updateGraphVisuals();
+          this.updateEdgeHud();
+        },
+      }
+    );
+
+    this.graphDiagnosticsModal = new GraphDiagnosticsModal(
+      this.graphStore,
+      this.store,
+      {
+        sceneRoot: this.sceneManager.currentModelGroup,
+        getCameraTransform: () => ({
+          position: this.sceneManager.camera.position.clone(),
+          quaternion: this.sceneManager.camera.quaternion.clone(),
+        }),
+        onHighlightRoute: (points) => {
+          this.graphVisualizer.highlightRoute(points);
+        },
+        onLocateWaypoint: (wpId) => {
+          const wp = this.graphStore.getWaypoint(wpId);
+          if (wp) {
+            this.navController.flyTo(
+              new THREE.Vector3(wp.position.x, wp.position.y + 1.2, wp.position.z + 2.5),
+              new THREE.Vector3(wp.position.x, wp.position.y, wp.position.z),
+              1.2
+            );
+          }
+        },
+      }
+    );
+
+    // EventBus graph listeners
+    this.eventBus.on('graph:waypoint_selected', (wp: any) => {
+      if (wp) {
+        if (this.viewMode === 'edit' && this.activeMode !== 'graph') {
+          const tabGraph = document.getElementById('tab-mode-graph');
+          tabGraph?.click();
+        }
+        if (this.activeMode === 'graph') {
+          this.updateGraphVisuals();
+          this.updateRightSidebarHeader('Thuộc tính Waypoint Toàn Cục', 'network');
+          const mesh = this.graphVisualizer.getWaypointMesh(wp.id);
+          if (mesh && !wp.locked) {
+            this.gizmoManager.attach(mesh);
+            document.getElementById('gizmo-mode-toolbar')!.style.display = 'flex';
+            this.setGizmoMode('translate');
+          } else {
+            this.gizmoManager.detach();
+            document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
+          }
+        }
+      }
+    });
+
+    this.eventBus.on('graph:waypoint_deselected', () => {
+      if (this.activeMode === 'graph') {
+        this.gizmoManager.detach();
+        document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
+        this.updateGraphVisuals();
+      }
+    });
+
+    this.eventBus.on('graph:edge_selected', () => {
+      if (this.viewMode === 'edit' && this.activeMode !== 'graph') {
+        const tabGraph = document.getElementById('tab-mode-graph');
+        tabGraph?.click();
+      }
+      this.updateRightSidebarHeader('Thuộc tính Cạnh Liên Kết', 'network');
+      this.gizmoManager.detach();
+      document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
+      this.updateGraphVisuals();
+      this.updateEdgeHud();
+    });
+
+    this.eventBus.on('graph:edge_deselected', () => {
+      this.updateGraphVisuals();
+      this.updateEdgeHud();
+    });
+
+    this.eventBus.on('graph:edge_updated', () => {
+      this.updateGraphVisuals();
+      this.updateEdgeHud();
+    });
+
+    this.eventBus.on('graph:edge_deleted', () => {
+      this.updateGraphVisuals();
+      this.updateEdgeHud();
+    });
 
     this.sceneManager.addUpdateCallback(() => {
       if (this.isAligningEndOrientation) {
@@ -231,30 +501,111 @@ export class EditorApp {
     this.placementHud = document.getElementById('placement-hud')!;
     this.endOrientHud = document.getElementById('end-orientation-hud')!;
     this.bindEndOrientationHudEvents();
+    this.bindEdgeHudEvents();
 
     // 6. Bind Global Events
     this.bindGlobalEvents();
+    this.bindViewModeSwitcher();
     this.bindModeSwitcherEvents();
     this.bindViewportInteractions();
     this.bindTopNavEvents();
     this.bindModelImportEvents();
     this.bindPathEvents();
 
-    // 7. Auto-load sample apartment on start
+    // 7. Initial visualizer visibility (Hotspots mode is active initially)
+    this.graphVisualizer.setVisible(false);
+    this.pathVisualizer.setVisible(false);
+
+    // 8. Auto-load sample apartment on start
     await this.loadSampleModel('modern_apartment');
+  }
+
+  private bindViewModeSwitcher(): void {
+    const btnEdit = document.getElementById('btn-view-mode-edit');
+    const btnPreview = document.getElementById('btn-view-mode-preview');
+
+    btnEdit?.addEventListener('click', () => {
+      this.setViewMode('edit');
+    });
+
+    btnPreview?.addEventListener('click', () => {
+      this.setViewMode('preview');
+    });
+  }
+
+  public setViewMode(mode: 'edit' | 'preview'): void {
+    if (this.viewMode === mode) return;
+    this.viewMode = mode;
+
+    const btnEdit = document.getElementById('btn-view-mode-edit')!;
+    const btnPreview = document.getElementById('btn-view-mode-preview')!;
+    const sidebarLeft = document.getElementById('sidebar-left')!;
+    const sidebarRight = document.getElementById('sidebar-right')!;
+    const gizmoToolbar = document.getElementById('gizmo-mode-toolbar')!;
+
+    if (mode === 'preview') {
+      btnPreview.classList.add('active');
+      btnEdit.classList.remove('active');
+
+      // Detach any active editing gizmos
+      this.gizmoManager.detach();
+      gizmoToolbar.style.display = 'none';
+
+      // Hide sidebars for maximized 3D viewing & navigation experience
+      sidebarLeft.style.display = 'none';
+      sidebarRight.style.display = 'none';
+
+      if (this.isPlacingHotspot) this.setPlacementMode(false);
+      if (this.isPlacingWaypoint) this.setWaypointPlacementMode(false);
+
+      this.toastNotification.show(
+        'Chế độ Xem trước (Preview): Nhấn vào bất kỳ Hotspot hoặc Waypoint nào để camera tự tìm đường và bay tới!',
+        'info',
+        4000
+      );
+    } else {
+      btnEdit.classList.add('active');
+      btnPreview.classList.remove('active');
+
+      // Stop camera flight if moving
+      if (this.cameraNavigator.isNavigating()) {
+        this.cameraNavigator.stop();
+      }
+
+      // Restore sidebars
+      sidebarLeft.style.display = 'flex';
+      sidebarRight.style.display = 'flex';
+
+      this.toastNotification.show('Chế độ Biên tập: Chỉnh sửa tọa độ và góc nhìn.', 'info');
+    }
+  }
+
+  private updateRightSidebarHeader(title: string, iconName: string): void {
+    const titleEl = document.getElementById('sidebar-right-title');
+    if (titleEl) titleEl.textContent = title;
+    const iconEl = document.getElementById('sidebar-right-icon');
+    if (iconEl) {
+      iconEl.setAttribute('data-lucide', iconName);
+      if ((window as any).lucide) (window as any).lucide.createIcons();
+    }
   }
 
   private bindModeSwitcherEvents(): void {
     const tabHotspots = document.getElementById('tab-mode-hotspots')!;
     const tabPaths = document.getElementById('tab-mode-paths')!;
+    const tabGraph = document.getElementById('tab-mode-graph')!;
 
     const panelHotspotsLeft = document.getElementById('panel-hotspots-content')!;
     const panelPathsLeft = document.getElementById('panel-camera-paths')!;
+    const panelGraphLeft = document.getElementById('panel-graph-content')!;
+
     const panelHotspotsRight = document.getElementById('inspector-content')!;
     const panelPathsRight = document.getElementById('panel-path-inspector')!;
+    const panelGraphRight = document.getElementById('panel-graph-inspector')!;
 
     const topbarHotspotActions = document.getElementById('topbar-hotspot-actions')!;
     const topbarPathActions = document.getElementById('topbar-path-actions')!;
+    const topbarGraphActions = document.getElementById('topbar-graph-actions')!;
 
     const btnCreatePathTopbar = document.getElementById('btn-create-path-topbar')!;
     const btnAddWaypointTopbar = document.getElementById('btn-add-waypoint-topbar')!;
@@ -266,18 +617,43 @@ export class EditorApp {
 
       tabHotspots.classList.add('active');
       tabPaths.classList.remove('active');
+      tabGraph.classList.remove('active');
 
       panelHotspotsLeft.style.display = 'flex';
       panelPathsLeft.style.display = 'none';
+      panelGraphLeft.style.display = 'none';
+
       panelHotspotsRight.style.display = 'block';
       panelPathsRight.style.display = 'none';
+      panelGraphRight.style.display = 'none';
 
       topbarHotspotActions.style.display = 'flex';
       topbarPathActions.style.display = 'none';
+      topbarGraphActions.style.display = 'none';
 
       if (this.isAligningEndOrientation) this.cancelAligningEndOrientation();
       this.timelineHUD.setVisible(false);
       this.gizmoManager.detach();
+      this.graphStore.selectEdge(null);
+      this.graphStore.selectWaypoint(null);
+      this.pathStore.selectWaypoint(null);
+
+      // Hide graph and path visualizers to prevent clutter and raycast interception
+      this.graphVisualizer.setVisible(false);
+      this.pathVisualizer.setVisible(false);
+      this.updateRightSidebarHeader('Thuộc tính Hotspot', 'sliders');
+
+      // If a hotspot was selected in store, re-attach gizmo to it
+      const selectedId = this.store.getSelectedId();
+      if (selectedId) {
+        const marker = this.activeMarkers.get(selectedId);
+        const item = this.store.getById(selectedId);
+        if (marker && item && !item.locked && this.viewMode === 'edit') {
+          this.gizmoManager.attach(marker.anchor);
+          document.getElementById('gizmo-mode-toolbar')!.style.display = 'flex';
+          this.setGizmoMode('translate');
+        }
+      }
 
       this.toastNotification.show('Chế độ: Quản lý Hotspot', 'info');
     });
@@ -288,17 +664,28 @@ export class EditorApp {
 
       tabPaths.classList.add('active');
       tabHotspots.classList.remove('active');
+      tabGraph.classList.remove('active');
 
       panelHotspotsLeft.style.display = 'none';
       panelPathsLeft.style.display = 'flex';
+      panelGraphLeft.style.display = 'none';
+
       panelHotspotsRight.style.display = 'none';
       panelPathsRight.style.display = 'flex';
+      panelGraphRight.style.display = 'none';
 
       topbarHotspotActions.style.display = 'none';
       topbarPathActions.style.display = 'flex';
+      topbarGraphActions.style.display = 'none';
 
       this.store.select(null);
+      this.graphStore.selectEdge(null);
+      this.graphStore.selectWaypoint(null);
       this.gizmoManager.detach();
+
+      this.graphVisualizer.setVisible(false);
+      this.pathVisualizer.setVisible(true);
+      this.updateRightSidebarHeader('Thuộc tính Tuyến Camera', 'route');
 
       this.pathListPanel.render();
       this.pathPropertyPanel.updateFromStore();
@@ -306,6 +693,42 @@ export class EditorApp {
 
       if ((window as any).lucide) (window as any).lucide.createIcons();
       this.toastNotification.show('Chế độ: Thiết kế Tuyến Camera (Path Editor)', 'info');
+    });
+
+    tabGraph.addEventListener('click', () => {
+      if (this.activeMode === 'graph') return;
+      this.activeMode = 'graph';
+
+      tabGraph.classList.add('active');
+      tabHotspots.classList.remove('active');
+      tabPaths.classList.remove('active');
+
+      panelHotspotsLeft.style.display = 'none';
+      panelPathsLeft.style.display = 'none';
+      panelGraphLeft.style.display = 'flex';
+
+      panelHotspotsRight.style.display = 'none';
+      panelPathsRight.style.display = 'none';
+      panelGraphRight.style.display = 'flex';
+
+      topbarHotspotActions.style.display = 'none';
+      topbarPathActions.style.display = 'none';
+      topbarGraphActions.style.display = 'flex';
+
+      this.store.select(null);
+      this.pathStore.selectWaypoint(null);
+      this.gizmoManager.detach();
+
+      this.pathVisualizer.setVisible(false);
+      this.graphVisualizer.setVisible(true);
+      this.updateRightSidebarHeader('Thuộc tính Mạng Waypoint', 'network');
+
+      this.graphPanel.render();
+      this.graphPropertyPanel.updateFromStore();
+      this.updateGraphVisuals();
+
+      if ((window as any).lucide) (window as any).lucide.createIcons();
+      this.toastNotification.show('Chế độ: Quản lý Mạng Waypoint Toàn Cục', 'info');
     });
 
     btnCreatePathTopbar.addEventListener('click', () => {
@@ -320,12 +743,32 @@ export class EditorApp {
       this.toggleTimelinePreview();
     });
 
-    const btnSetEndOrientTopbar = document.getElementById('btn-set-end-orient-topbar');
-    if (btnSetEndOrientTopbar) {
-      btnSetEndOrientTopbar.addEventListener('click', () => {
-        this.startAligningEndOrientation();
-      });
-    }
+    document.getElementById('btn-add-global-wp-topbar')?.addEventListener('click', () => {
+      this.setGlobalWaypointPlacementMode(!this.isPlacingGlobalWaypoint);
+    });
+
+    document.getElementById('btn-auto-connect-topbar')?.addEventListener('click', () => {
+      const res = this.graphStore.proposeConnections(
+        { maxDistance: 8.0, maxHeightDiff: 1.5, bidirectional: true },
+        (p1, p2) => this.pathfindingService.isLineSafe(p1, p2, this.sceneManager.currentModelGroup, 0.25)
+      );
+      this.updateGraphVisuals();
+      this.toastNotification.show(
+        `Đã tự động liên kết: ${res.validCount} cạnh an toàn, ${res.blockedCount} cạnh bị chặn!`,
+        res.validCount > 0 ? 'success' : 'info'
+      );
+    });
+
+    document.getElementById('btn-diagnose-graph-topbar')?.addEventListener('click', () => {
+      this.graphDiagnosticsModal.show();
+    });
+
+    document.getElementById('btn-toggle-graph-overlay')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget as HTMLElement;
+      const visible = this.graphVisualizer.toggleVisible();
+      btn.classList.toggle('active', visible);
+      this.toastNotification.show(visible ? 'Đã hiện Mạng Waypoint' : 'Đã ẩn Mạng Waypoint', 'info');
+    });
   }
 
   private toggleTimelinePreview(): void {
@@ -342,6 +785,7 @@ export class EditorApp {
     } else if (state === 'paused') {
       this.playbackController.resume();
     } else {
+      this.syncActivePathVisuals();
       this.timelineHUD.setVisible(true);
       this.playbackController.play(activePath, this.trajectoryEvaluator);
     }
@@ -368,22 +812,33 @@ export class EditorApp {
 
     // When waypoint is selected, attach 3D Gizmo to its anchor
     this.eventBus.on('waypoint:selected', (wp: CameraWaypoint) => {
-      if (this.activeMode === 'paths') {
+      if (this.activeMode === 'graph') return; // Do not switch to paths mode when in graph mode
+      this.pathVisualizer.updateWaypointSelection(wp.id);
+      if (this.viewMode === 'edit') {
+        if (this.activeMode !== 'paths') {
+          const tabPaths = document.getElementById('tab-mode-paths');
+          tabPaths?.click();
+        }
         const anchor = this.pathVisualizer.getAnchor(wp.id);
         if (anchor && !wp.locked) {
           this.gizmoManager.attach(anchor);
           document.getElementById('gizmo-mode-toolbar')!.style.display = 'flex';
         } else {
           this.gizmoManager.detach();
+          if (wp.locked) {
+            this.toastNotification.show(`Waypoint "${wp.name}" đang bị khóa vị trí.`, 'info');
+          }
         }
         this.pathPropertyPanel.updateFromStore();
       }
     });
 
     this.eventBus.on('waypoint:deselected', () => {
+      if (this.activeMode === 'graph') return;
+      this.pathVisualizer.updateWaypointSelection(null);
+      this.gizmoManager.detach();
+      document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
       if (this.activeMode === 'paths') {
-        this.gizmoManager.detach();
-        document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
         this.pathPropertyPanel.updateFromStore();
       }
     });
@@ -574,12 +1029,20 @@ export class EditorApp {
   private bindGlobalEvents(): void {
     // Event: Hotspot Selected
     this.eventBus.on(EditorEvents.HOTSPOT_SELECTED, (item: HotspotItem) => {
+      if (this.viewMode === 'edit' && this.activeMode !== 'hotspots') {
+        const tabHotspots = document.getElementById('tab-mode-hotspots');
+        tabHotspots?.click();
+      }
+
+      this.updateRightSidebarHeader('Thuộc tính Hotspot', 'sliders');
+
       if (this.activeMode === 'hotspots') {
         this.updateSelectionVisuals(item.id);
         const marker = this.activeMarkers.get(item.id);
-        if (marker && !item.locked) {
+        if (marker && !item.locked && this.viewMode === 'edit') {
           this.gizmoManager.attach(marker.anchor);
           document.getElementById('gizmo-mode-toolbar')!.style.display = 'flex';
+          this.setGizmoMode('translate');
         } else {
           this.gizmoManager.detach();
           document.getElementById('gizmo-mode-toolbar')!.style.display = 'none';
@@ -719,7 +1182,11 @@ export class EditorApp {
       }
       // Cancel Placement or Deselect: Esc
       else if (e.code === 'Escape') {
-        if (this.isAligningEndOrientation) {
+        if (this.cameraNavigator.isNavigating()) {
+          this.cameraNavigator.stop();
+        } else if (this.gizmoManager.isDragging()) {
+          this.gizmoManager.cancelDrag();
+        } else if (this.isAligningEndOrientation) {
           this.cancelAligningEndOrientation();
         } else if (this.isPlacingHotspot) {
           this.setPlacementMode(false);
@@ -753,8 +1220,110 @@ export class EditorApp {
         this.handleWaypointPlacementClick(e);
         return;
       }
+      if (this.isPlacingGlobalWaypoint && e.button === 0) {
+        this.handleGlobalWaypointPlacementClick(e);
+        return;
+      }
 
-      // If clicking empty space in normal mode, deselect
+      // Raycast against 3D Waypoints (Path mode or Preview)
+      if (e.button === 0 && !this.gizmoManager.isDragging()) {
+        const containerRect = canvasWrap.getBoundingClientRect();
+        const mouseX = ((e.clientX - containerRect.left) / containerRect.width) * 2 - 1;
+        const mouseY = -((e.clientY - containerRect.top) / containerRect.height) * 2 + 1;
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), this.sceneManager.camera);
+
+        // Check Hotspots (Edit mode or Preview)
+        if (this.activeMode === 'hotspots' || this.viewMode === 'preview') {
+          const intersects = raycaster.intersectObjects(this.sceneManager.hotspotLayerGroup.children, true);
+          let hitHotspotId: string | null = null;
+          for (const hit of intersects) {
+            let cur: THREE.Object3D | null = hit.object;
+            while (cur && cur !== this.sceneManager.hotspotLayerGroup) {
+              if (cur.userData && cur.userData.type === 'hotspot_picker' && cur.userData.hotspotId) {
+                hitHotspotId = cur.userData.hotspotId;
+                break;
+              }
+              cur = cur.parent;
+            }
+            if (hitHotspotId) break;
+          }
+
+          if (hitHotspotId) {
+            const hItem = this.store.getById(hitHotspotId);
+            if (hItem) {
+              if (this.viewMode === 'preview') {
+                const allWaypoints = Array.from(
+                  new Map(
+                    [...this.graphStore.getAllWaypoints(), ...this.pathStore.getAllWaypoints()].map((w) => [w.id, w])
+                  ).values()
+                );
+                this.cameraNavigator.navigateToHotspot(
+                  hItem,
+                  this.store.getAll(),
+                  allWaypoints,
+                  this.pathStore.getAllPaths(),
+                  this.graphStore.getAllEdges()
+                );
+              } else {
+                this.store.select(hitHotspotId);
+              }
+              return;
+            }
+          }
+        }
+
+        // Check Global Waypoints and Edges ONLY when in Graph mode
+        if (this.activeMode === 'graph') {
+          const interactables = this.graphVisualizer.getInteractableObjects();
+          const intersects = raycaster.intersectObjects(interactables, false);
+          if (intersects.length > 0) {
+            const hitWpId = intersects[0].object.userData.waypointId;
+            if (hitWpId) {
+              this.graphStore.selectWaypoint(hitWpId);
+              return;
+            }
+          }
+
+          // Pick 3D edge lines (e.g. Red blocked line or Green line)
+          const hitEdgeId = this.graphVisualizer.pickEdge(raycaster);
+          if (hitEdgeId) {
+            this.graphStore.selectEdge(hitEdgeId);
+            const edge = this.graphStore.getEdge(hitEdgeId);
+            const wpA = edge ? this.graphStore.getWaypoint(edge.fromWaypointId) : null;
+            const wpB = edge ? this.graphStore.getWaypoint(edge.toWaypointId) : null;
+            const nameA = wpA ? wpA.name : (edge?.fromWaypointId.slice(0, 6) || 'A');
+            const nameB = wpB ? wpB.name : (edge?.toWaypointId.slice(0, 6) || 'B');
+            this.toastNotification.show(
+              `Đã chọn cạnh liên kết "${nameA} ⇄ ${nameB}"`,
+              'info'
+            );
+            return;
+          }
+
+          this.graphStore.selectWaypoint(null);
+          this.graphStore.selectEdge(null);
+          return;
+        }
+
+        // Check Path Waypoints ONLY when in Paths mode or in Preview mode
+        if (this.activeMode === 'paths' || this.viewMode === 'preview') {
+          const hitWpId = this.pathVisualizer.pickWaypoint(raycaster);
+          if (hitWpId) {
+            if (this.viewMode === 'preview') {
+              const wp = this.pathStore.getWaypoint(hitWpId);
+              if (wp) {
+                this.cameraNavigator.navigateToWaypoint(wp, this.sceneManager.currentModelGroup);
+              }
+            } else {
+              this.pathStore.selectWaypoint(hitWpId);
+            }
+            return;
+          }
+        }
+      }
+
+      // If clicking empty space in normal mode, deselect (never deselect while interacting with Gizmo)
       if (e.button === 0 && !this.gizmoManager.isDragging()) {
         const hit = this.surfacePicker.pickSurface(
           e.clientX,
@@ -766,10 +1335,61 @@ export class EditorApp {
         if (!hit) {
           if (this.activeMode === 'hotspots') {
             this.store.select(null);
-          } else {
+          } else if (this.activeMode === 'paths') {
             this.pathStore.selectWaypoint(null);
+          } else if (this.activeMode === 'graph') {
+            this.graphStore.selectWaypoint(null);
+            this.graphStore.selectEdge(null);
           }
         }
+      }
+    });
+
+    canvasWrap.addEventListener('pointermove', (e) => {
+      if (this.gizmoManager.isDragging() || this.isPlacingHotspot || this.isPlacingWaypoint || this.isPlacingGlobalWaypoint) return;
+      const containerRect = canvasWrap.getBoundingClientRect();
+      const mouseX = ((e.clientX - containerRect.left) / containerRect.width) * 2 - 1;
+      const mouseY = -((e.clientY - containerRect.top) / containerRect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), this.sceneManager.camera);
+
+      if (this.activeMode === 'hotspots' || this.viewMode === 'preview') {
+        const intersects = raycaster.intersectObjects(this.sceneManager.hotspotLayerGroup.children, true);
+        for (const hit of intersects) {
+          let cur: THREE.Object3D | null = hit.object;
+          while (cur && cur !== this.sceneManager.hotspotLayerGroup) {
+            if (cur.userData && cur.userData.type === 'hotspot_picker') {
+              canvasWrap.style.cursor = 'pointer';
+              return;
+            }
+            cur = cur.parent;
+          }
+        }
+      }
+
+      if (this.activeMode === 'graph') {
+        const interactables = this.graphVisualizer.getInteractableObjects();
+        const intersects = raycaster.intersectObjects(interactables, false);
+        if (intersects.length > 0) {
+          canvasWrap.style.cursor = 'pointer';
+          return;
+        }
+
+        const hitEdgeId = this.graphVisualizer.pickEdge(raycaster);
+        if (hitEdgeId) {
+          canvasWrap.style.cursor = 'pointer';
+          return;
+        }
+      } else if (this.activeMode === 'paths') {
+        const hitWpId = this.pathVisualizer.pickWaypoint(raycaster);
+        if (hitWpId) {
+          canvasWrap.style.cursor = 'pointer';
+          return;
+        }
+      }
+
+      if (!this.isPlacingHotspot && !this.isPlacingWaypoint && !this.isPlacingGlobalWaypoint) {
+        canvasWrap.style.cursor = 'default';
       }
     });
 
@@ -890,6 +1510,11 @@ export class EditorApp {
       this.exportConfigJson();
     });
 
+    // Export Bundled GLB Button
+    document.getElementById('btn-export-glb-bundle')?.addEventListener('click', () => {
+      this.exportBundledGlb();
+    });
+
     // Import JSON File Trigger
     const jsonInput = document.getElementById('json-file-input') as HTMLInputElement;
     document.getElementById('btn-import-json-trigger')?.addEventListener('click', () => {
@@ -915,6 +1540,8 @@ export class EditorApp {
       if (confirmed) {
         this.store.clear(true);
         this.pathStore.clear(true);
+        this.graphStore.clear();
+        this.updateGraphVisuals();
         this.toastNotification.show('Đã xóa trắng cấu hình', 'info');
       }
     });
@@ -1047,6 +1674,7 @@ export class EditorApp {
       type: 'navigation',
       position: MathUtils.roundVector(placementPos, 2),
       rotation: { x: 0, y: 0, z: 0 },
+      cameraView: { configured: false, yaw: 0, pitch: 0, roll: 0 },
       visible: true,
       locked: false,
       marker: {
@@ -1116,6 +1744,94 @@ export class EditorApp {
     this.toastNotification.show(`Đã thêm waypoint "${newWaypoint.name}" vào tuyến!`, 'success');
   }
 
+  private setGlobalWaypointPlacementMode(enabled: boolean): void {
+    this.isPlacingGlobalWaypoint = enabled;
+    const canvasWrap = document.getElementById('canvas-3d-wrapper')!;
+    if (enabled) {
+      this.isPlacingHotspot = false;
+      this.isPlacingWaypoint = false;
+      this.placementHud.style.display = 'flex';
+      const hudText = this.placementHud.querySelector('span');
+      if (hudText) hudText.textContent = 'Chế độ đặt Waypoint toàn cục: Nhấp vào bề mặt sàn trong 3D';
+      canvasWrap.style.cursor = 'crosshair';
+      this.toastNotification.show('Nhấp chuột lên sàn để đặt Waypoint toàn cục', 'info');
+    } else {
+      this.placementHud.style.display = 'none';
+      canvasWrap.style.cursor = 'default';
+    }
+  }
+
+  private handleGlobalWaypointPlacementClick(e: MouseEvent): void {
+    const canvasWrap = document.getElementById('canvas-3d-wrapper')!;
+    const hit = this.surfacePicker.pickSurface(
+      e.clientX,
+      e.clientY,
+      this.sceneManager.camera,
+      this.sceneManager.currentModelGroup,
+      canvasWrap.getBoundingClientRect()
+    );
+
+    if (!hit) {
+      this.toastNotification.show('Vui lòng nhấp lên bề mặt sàn mô hình để đặt Waypoint', 'warning');
+      return;
+    }
+
+    const isFloor = hit.normal.y > 0.7;
+    const wpPos = hit.point.clone();
+    if (isFloor) {
+      wpPos.y += 1.5; // Human eye height
+    } else {
+      wpPos.addScaledVector(hit.normal, 0.5);
+    }
+
+    const order = this.graphStore.getAllWaypoints().length + 1;
+    const newWaypoint: CameraWaypoint = {
+      id: MathUtils.generateUUID(),
+      name: `Waypoint W${order}`,
+      position: MathUtils.roundVector(wpPos, 2),
+      zone: '',
+      floor: 1,
+      status: 'active',
+      orientation: {
+        mode: 'followPath',
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+      },
+      locked: false,
+      dwellTimeSeconds: 0,
+      speedMultiplier: 1.0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Auto-propose edges to nearby visible waypoints within 8m
+    this.graphStore.addWaypoint(newWaypoint, false);
+    const autoResult = this.graphStore.proposeConnections(
+      { maxDistance: 8.0, maxHeightDiff: 1.5, bidirectional: true },
+      (p1, p2) => this.pathfindingService.isLineSafe(p1, p2, this.sceneManager.currentModelGroup, 0.25)
+    );
+    this.graphStore.deleteWaypoint(newWaypoint.id, false);
+
+    this.history.execute(new AddGlobalWaypointCommand(this.graphStore, newWaypoint, autoResult.edges));
+    this.setGlobalWaypointPlacementMode(false);
+    this.updateGraphVisuals();
+    this.toastNotification.show(
+      `Đã thêm Waypoint toàn cục "${newWaypoint.name}" (${autoResult.validCount} liên kết mới)!`,
+      'success'
+    );
+  }
+
+  private updateGraphVisuals(): void {
+    const waypoints = this.graphStore.getAllWaypoints();
+    const edges = this.graphStore.getAllEdges();
+    const selWpId = this.graphStore.getSelectedWaypointId();
+    const selEdgeId = this.graphStore.getSelectedEdgeId();
+    const isolated = this.diagnosticsService.findIsolatedWaypoints(waypoints, edges);
+
+    this.graphVisualizer.updateVisuals(waypoints, edges, selWpId, selEdgeId, isolated);
+  }
+
   private snapSelectedToSurface(): void {
     const item = this.store.getSelectedItem();
     if (!item) return;
@@ -1146,7 +1862,23 @@ export class EditorApp {
 
     if (!marker) {
       marker = new HotspotMarker2D(item, (selectedItem) => {
-        this.store.select(selectedItem.id);
+        const freshHotspot = this.store.getById(selectedItem.id) || selectedItem;
+        if (this.viewMode === 'preview') {
+          const allWaypoints = Array.from(
+            new Map(
+              [...this.graphStore.getAllWaypoints(), ...this.pathStore.getAllWaypoints()].map((w) => [w.id, w])
+            ).values()
+          );
+          this.cameraNavigator.navigateToHotspot(
+            freshHotspot,
+            this.store.getAll(),
+            allWaypoints,
+            this.pathStore.getAllPaths(),
+            this.graphStore.getAllEdges()
+          );
+        } else {
+          this.store.select(freshHotspot.id);
+        }
       });
       this.activeMarkers.set(item.id, marker);
       this.sceneManager.hotspotLayerGroup.add(marker.anchor);
@@ -1306,15 +2038,46 @@ export class EditorApp {
     // 5. Focus camera to fit model bounds
     this.navController.focusBounds(result.box);
 
-    // 6. Check for local storage auto-save draft for this model
+    // 6. Check for embedded bahaProjectConfig in Bundled GLB
+    let embeddedConfig: any = result.model.userData?.bahaProjectConfig;
+    if (!embeddedConfig) {
+      result.model.traverse((node) => {
+        if (!embeddedConfig && node.userData?.bahaProjectConfig) {
+          embeddedConfig = node.userData.bahaProjectConfig;
+        }
+      });
+    }
+
+    if (embeddedConfig && embeddedConfig.hotspots && embeddedConfig.hotspots.length > 0) {
+      this.store.setAll(embeddedConfig.hotspots, false);
+      if (embeddedConfig.waypoints) {
+        this.graphStore.loadData(embeddedConfig.waypoints, embeddedConfig.waypointEdges || []);
+        this.updateGraphVisuals();
+      }
+      if (embeddedConfig.cameraPaths) {
+        this.pathStore.setAll(embeddedConfig.cameraPaths, embeddedConfig.waypoints || [], false);
+      }
+      this.toastNotification.show(
+        `Đã tự động nạp ${embeddedConfig.hotspots.length} Hotspots và ${embeddedConfig.waypoints?.length || 0} Waypoints nhúng sẵn trong file GLB!`,
+        'success'
+      );
+      this.syncActivePathVisuals();
+      return;
+    }
+
+    // 7. Fallback: Check for local storage auto-save draft for this model
     const savedConfig = ConfigStorageService.loadFromLocalStorage(result.meta.fingerprint);
     if (savedConfig && savedConfig.hotspots.length > 0) {
       this.store.setAll(savedConfig.hotspots, false);
+      if (savedConfig.waypoints) {
+        this.graphStore.loadData(savedConfig.waypoints, savedConfig.waypointEdges || []);
+        this.updateGraphVisuals();
+      }
       if (savedConfig.cameraPaths) {
         this.pathStore.setAll(savedConfig.cameraPaths, savedConfig.waypoints || [], false);
       }
       this.toastNotification.show(
-        `Đã tự động tải lại ${savedConfig.hotspots.length} hotspot và ${savedConfig.cameraPaths?.length || 0} tuyến camera!`,
+        `Đã tự động tải lại ${savedConfig.hotspots.length} hotspot, ${this.graphStore.getAllWaypoints().length} waypoint và ${savedConfig.cameraPaths?.length || 0} tuyến camera!`,
         'success'
       );
     } else if (result.meta.fileName.includes('apartment')) {
@@ -1326,6 +2089,7 @@ export class EditorApp {
           type: 'navigation',
           position: { x: 0, y: 1.2, z: 0 },
           rotation: { x: 0, y: 0, z: 0 },
+          cameraView: { configured: false, yaw: 0, pitch: 0, roll: 0 },
           visible: true,
           locked: false,
           notes: 'Điểm nhìn tổng quan phòng khách và ban công',
@@ -1340,6 +2104,7 @@ export class EditorApp {
           type: 'navigation',
           position: { x: 5.5, y: 1.2, z: 0 },
           rotation: { x: 0, y: 0, z: 0 },
+          cameraView: { configured: false, yaw: 0, pitch: 0, roll: 0 },
           visible: true,
           locked: false,
           notes: 'Đảo bếp và quầy bar sang trọng',
@@ -1354,6 +2119,7 @@ export class EditorApp {
           type: 'navigation',
           position: { x: 0, y: 1.2, z: 5.5 },
           rotation: { x: 0, y: 0, z: 0 },
+          cameraView: { configured: false, yaw: 0, pitch: 0, roll: 0 },
           visible: true,
           locked: false,
           notes: 'Không gian phòng ngủ chính',
@@ -1466,25 +2232,142 @@ export class EditorApp {
     }
   }
 
-  private startAligningEndOrientation(): void {
-    const activePath = this.pathStore.getActivePath();
-    if (!activePath) {
-      this.toastNotification.show('Vui lòng chọn một tuyến camera trước!', 'warning');
+  private bindEdgeHudEvents(): void {
+    const btnConfirm = document.getElementById('btn-hud-confirm-edge-safe');
+    const btnRetest = document.getElementById('btn-hud-retest-edge');
+    const btnDelete = document.getElementById('btn-hud-delete-edge');
+    const btnClose = document.getElementById('btn-hud-close-edge');
+
+    btnConfirm?.addEventListener('click', () => {
+      const edge = this.graphStore.getSelectedEdge();
+      if (!edge) return;
+      const oldEdge = JSON.parse(JSON.stringify(edge));
+      edge.status = 'valid';
+      edge.confirmedByAdmin = true;
+      this.history.execute(new UpdateEdgeCommand(this.graphStore, oldEdge, edge));
+
+      const wpA = this.graphStore.getWaypoint(edge.fromWaypointId);
+      const wpB = this.graphStore.getWaypoint(edge.toWaypointId);
+      const nameA = wpA ? wpA.name : edge.fromWaypointId.slice(0, 6);
+      const nameB = wpB ? wpB.name : edge.toWaypointId.slice(0, 6);
+      this.toastNotification.show(
+        `Đã cưỡng chế chấp thuận an toàn cho cạnh "${nameA} ⇄ ${nameB}"!`,
+        'success'
+      );
+      this.updateGraphVisuals();
+      this.updateEdgeHud();
+    });
+
+    btnRetest?.addEventListener('click', () => {
+      const edge = this.graphStore.getSelectedEdge();
+      if (!edge) return;
+      const wpA = this.graphStore.getWaypoint(edge.fromWaypointId);
+      const wpB = this.graphStore.getWaypoint(edge.toWaypointId);
+      if (wpA && wpB) {
+        const pA = new THREE.Vector3(wpA.position.x, wpA.position.y, wpA.position.z);
+        const pB = new THREE.Vector3(wpB.position.x, wpB.position.y, wpB.position.z);
+        const safe = this.pathfindingService.isLineSafe(pA, pB, this.sceneManager.currentModelGroup, 0.25);
+        const oldEdge = JSON.parse(JSON.stringify(edge));
+        edge.status = safe ? 'valid' : 'blocked';
+        edge.confirmedByAdmin = safe;
+        this.history.execute(new UpdateEdgeCommand(this.graphStore, oldEdge, edge));
+        this.updateGraphVisuals();
+        this.updateEdgeHud();
+        this.toastNotification.show(
+          safe ? 'Tia thông thoáng! Cạnh đã được đánh dấu an toàn.' : 'Tia bị va chạm tường/vật cản!',
+          safe ? 'success' : 'warning'
+        );
+      }
+    });
+
+    btnDelete?.addEventListener('click', () => {
+      const edge = this.graphStore.getSelectedEdge();
+      if (edge && confirm('Xóa cạnh kết nối này?')) {
+        this.history.execute(new DeleteEdgeCommand(this.graphStore, edge));
+        this.graphStore.selectEdge(null);
+        this.updateGraphVisuals();
+        this.updateEdgeHud();
+      }
+    });
+
+    btnClose?.addEventListener('click', () => {
+      this.graphStore.selectEdge(null);
+    });
+  }
+
+  private updateEdgeHud(): void {
+    const hud = document.getElementById('edge-selected-hud');
+    if (!hud) return;
+
+    const edge = this.graphStore.getSelectedEdge();
+    if (!edge) {
+      hud.style.display = 'none';
       return;
     }
 
-    const toHotspot = this.store.getById(activePath.toHotspotId);
-    if (!toHotspot) {
-      this.toastNotification.show('Không tìm thấy Hotspot đích của tuyến camera này!', 'warning');
-      return;
+    const wpA = this.graphStore.getWaypoint(edge.fromWaypointId);
+    const wpB = this.graphStore.getWaypoint(edge.toWaypointId);
+    const nameA = wpA ? wpA.name : edge.fromWaypointId.slice(0, 6);
+    const nameB = wpB ? wpB.name : edge.toWaypointId.slice(0, 6);
+
+    const titleEl = document.getElementById('hud-edge-title');
+    if (titleEl) {
+      titleEl.textContent = `Cạnh: ${nameA} ⇄ ${nameB} (${edge.distance.toFixed(1)}m)`;
     }
 
+    const pillEl = document.getElementById('hud-edge-status-pill');
+    if (pillEl) {
+      if (edge.status === 'valid') {
+        const text = edge.confirmedByAdmin ? '✓ An toàn (Đã cưỡng chế)' : '✓ Hợp lệ (An toàn)';
+        pillEl.textContent = text;
+        pillEl.style.background = 'rgba(16, 185, 129, 0.2)';
+        pillEl.style.color = '#10b981';
+        pillEl.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+      } else if (edge.status === 'blocked') {
+        pillEl.textContent = '🚫 Bị chặn (Vật cản)';
+        pillEl.style.background = 'rgba(239, 68, 68, 0.2)';
+        pillEl.style.color = '#ef4444';
+        pillEl.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+      } else if (edge.status === 'needs_confirmation') {
+        pillEl.textContent = '⚠ Cần kiểm tra độ cao';
+        pillEl.style.background = 'rgba(245, 158, 11, 0.2)';
+        pillEl.style.color = '#f59e0b';
+        pillEl.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+      } else {
+        pillEl.textContent = 'Chưa kiểm tra';
+        pillEl.style.background = 'rgba(148, 163, 184, 0.2)';
+        pillEl.style.color = '#94a3b8';
+        pillEl.style.borderColor = 'rgba(148, 163, 184, 0.4)';
+      }
+    }
+
+    const btnConfirm = document.getElementById('btn-hud-confirm-edge-safe');
+    if (btnConfirm) {
+      if (edge.confirmedByAdmin) {
+        btnConfirm.innerHTML = `<i data-lucide="shield-check"></i> <span>Đã cưỡng chế</span>`;
+        (btnConfirm as HTMLButtonElement).style.opacity = '0.75';
+      } else {
+        btnConfirm.innerHTML = `<i data-lucide="shield-check"></i> <span>Cưỡng chế an toàn</span>`;
+        (btnConfirm as HTMLButtonElement).style.opacity = '1.0';
+      }
+    }
+
+    hud.style.display = 'flex';
+    if ((window as any).lucide) (window as any).lucide.createIcons();
+  }
+
+  public startAligningHotspotCameraView(hotspot: HotspotItem): void {
     if (this.isAligningEndOrientation) return;
 
     // Stop playback if running
     if (this.playbackController.getState() !== 'idle') {
       this.playbackController.stop();
     }
+    if (this.cameraNavigator.isNavigating()) {
+      this.cameraNavigator.stop();
+    }
+
+    this.aligningTargetHotspotId = hotspot.id;
 
     // Save camera snapshot to restore if cancelled
     this.endOrientCameraSnapshot = {
@@ -1493,26 +2376,24 @@ export class EditorApp {
       target: this.navController.orbitControls.target.clone(),
     };
 
-    // Determine initial camera position: custom endPosition or destination hotspot
-    const startPos = (activePath.useCustomEndPosition && activePath.endPosition)
-      ? activePath.endPosition
-      : (activePath.endOrientation?.useCustomPosition && activePath.endOrientation?.position)
-      ? activePath.endOrientation.position
-      : toHotspot.position;
+    // Determine initial camera position: custom cameraPosition or hotspot position + 1.2m
+    const startPos = (hotspot.cameraView?.useCustomPosition && hotspot.cameraView.cameraPosition)
+      ? hotspot.cameraView.cameraPosition
+      : { x: hotspot.position.x, y: hotspot.position.y + 1.2, z: hotspot.position.z };
 
     // Determine initial yaw, pitch, roll
     let yaw = 0;
     let pitch = 0;
     let roll = 0;
 
-    if (activePath.endOrientation && activePath.endOrientation.mode === 'custom' && activePath.endOrientation.yaw !== undefined) {
-      yaw = activePath.endOrientation.yaw;
-      pitch = activePath.endOrientation.pitch ?? 0;
-      roll = activePath.endOrientation.roll ?? 0;
-    } else if (toHotspot.rotation) {
-      yaw = toHotspot.rotation.y ?? 0;
-      pitch = toHotspot.rotation.x ?? 0;
-      roll = toHotspot.rotation.z ?? 0;
+    if (hotspot.cameraView?.configured) {
+      yaw = hotspot.cameraView.yaw;
+      pitch = hotspot.cameraView.pitch;
+      roll = hotspot.cameraView.roll || 0;
+    } else if (hotspot.rotation && (hotspot.rotation.x !== 0 || hotspot.rotation.y !== 0)) {
+      yaw = hotspot.rotation.y;
+      pitch = hotspot.rotation.x;
+      roll = hotspot.rotation.z || 0;
     } else {
       const fwd = new THREE.Vector3();
       this.sceneManager.camera.getWorldDirection(fwd);
@@ -1536,30 +2417,75 @@ export class EditorApp {
     this.navController.orbitControls.enabled = true;
     this.navController.orbitControls.update();
 
-    // Switch mode to custom in path if not already
-    if (!activePath.endOrientation || activePath.endOrientation.mode !== 'custom') {
-      activePath.endOrientation = {
-        mode: 'custom',
-        useCustomPosition: Boolean(activePath.useCustomEndPosition),
-        position: startPos,
-        yaw: Math.round(yaw * 10) / 10,
-        pitch: Math.round(pitch * 10) / 10,
-        roll: Math.round(roll * 10) / 10,
-        transitionDuration: activePath.endOrientation?.transitionDuration ?? 2.0,
-        easing: activePath.endOrientation?.easing ?? 'easeInOut',
-      };
-      this.pathPropertyPanel.updateFromStore();
-    }
-
     this.isAligningEndOrientation = true;
     this.endOrientHud.style.display = 'flex';
     document.body.style.cursor = 'default';
 
+    const titleEl = document.getElementById('end-orient-hud-title');
+    if (titleEl) {
+      titleEl.textContent = `Thiết lập Hướng nhìn đích cho Hotspot: "${hotspot.name}"`;
+    }
+
     this.updateAligningHudDisplays();
 
     this.toastNotification.show(
-      'Chế độ căn điểm cuối: Tự do lướt và di chuyển trong không gian 3D (Orbit / Pan / Zoom / Walk)',
-      'info'
+      `Thiết lập Hướng nhìn đích cho "${hotspot.name}": Tự do lướt và xoay góc nhìn ưng ý trong 3D`,
+      'info',
+      4000
+    );
+  }
+
+  public captureCurrentCameraViewForHotspot(hotspot: HotspotItem): void {
+    const transform = this.getCurrentCameraTransform();
+    const updatedHotspot: HotspotItem = {
+      ...hotspot,
+      cameraView: {
+        configured: true,
+        useCustomPosition: false,
+        cameraPosition: undefined,
+        yaw: transform.yaw,
+        pitch: transform.pitch,
+        roll: 0,
+      },
+      rotation: {
+        x: transform.pitch,
+        y: transform.yaw,
+        z: 0,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.history.execute(
+      new UpdateHotspotCommand(this.store, hotspot, updatedHotspot, 'hướng nhìn camera')
+    );
+    this.syncActivePathVisuals();
+    this.toastNotification.show(
+      `Đã chụp góc nhìn hiện tại (Yaw: ${transform.yaw}°, Pit: ${transform.pitch}°) làm hướng nhìn chuẩn cho "${hotspot.name}"!`,
+      'success'
+    );
+  }
+
+  public previewHotspotCameraView(hotspot: HotspotItem): void {
+    const freshHotspot = this.store.getById(hotspot.id) || hotspot;
+    if (!freshHotspot.cameraView?.configured) {
+      this.toastNotification.show(
+        `Hotspot "${freshHotspot.name}" chưa thiết lập hướng nhìn chuẩn. Vui lòng nhấn "Căn chỉnh 3D" để thiết lập.`,
+        'info'
+      );
+      return;
+    }
+
+    const allWaypoints = Array.from(
+      new Map(
+        [...this.graphStore.getAllWaypoints(), ...this.pathStore.getAllWaypoints()].map((w) => [w.id, w])
+      ).values()
+    );
+    this.cameraNavigator.navigateToHotspot(
+      freshHotspot,
+      this.store.getAll(),
+      allWaypoints,
+      this.pathStore.getAllPaths(),
+      this.graphStore.getAllEdges()
     );
   }
 
@@ -1581,78 +2507,92 @@ export class EditorApp {
     if (posZEl) posZEl.textContent = cam.position.z.toFixed(2);
     if (yawEl) yawEl.textContent = `${Math.round(yaw)}°`;
     if (pitchEl) pitchEl.textContent = `${Math.round(pitch)}°`;
-
-    this.pathPropertyPanel.updateEndTransformValues(
-      { x: cam.position.x, y: cam.position.y, z: cam.position.z },
-      yaw,
-      pitch,
-      0
-    );
   }
 
   private saveEndTransform(includePosition: boolean): void {
-    const activePath = this.pathStore.getActivePath();
-    if (!activePath) {
+    const transform = this.getCurrentCameraTransform();
+
+    // Determine target hotspot
+    let targetHotspot: HotspotItem | undefined;
+    if (this.aligningTargetHotspotId) {
+      targetHotspot = this.store.getById(this.aligningTargetHotspotId);
+    }
+    if (!targetHotspot) {
+      const activePath = this.pathStore.getActivePath();
+      if (activePath) {
+        targetHotspot = this.store.getById(activePath.toHotspotId);
+      }
+    }
+
+    if (!targetHotspot) {
       this.exitAligningEndOrientation(false);
       return;
     }
 
-    const transform = this.getCurrentCameraTransform();
-    const toHotspot = this.store.getById(activePath.toHotspotId);
+    const pos = includePosition ? transform.position : undefined;
 
-    const pos = includePosition
-      ? transform.position
-      : (toHotspot ? { x: toHotspot.position.x, y: toHotspot.position.y, z: toHotspot.position.z } : undefined);
-
-    const updatedOrient: PathTerminalOrientation = {
-      mode: 'custom',
-      useCustomPosition: includePosition,
-      position: pos,
-      yaw: transform.yaw,
-      pitch: transform.pitch,
-      roll: 0,
-      transitionDuration: activePath.endOrientation?.transitionDuration ?? 2.0,
-      easing: activePath.endOrientation?.easing ?? 'easeInOut',
-    };
-
-    const updatedPath: CameraPath = {
-      ...activePath,
-      useCustomEndPosition: includePosition,
-      endPosition: pos,
-      endOrientation: updatedOrient,
+    const updatedHotspot: HotspotItem = {
+      ...targetHotspot,
+      cameraView: {
+        configured: true,
+        useCustomPosition: includePosition,
+        cameraPosition: pos,
+        yaw: transform.yaw,
+        pitch: transform.pitch,
+        roll: 0,
+      },
+      rotation: {
+        x: transform.pitch,
+        y: transform.yaw,
+        z: 0,
+      },
       updatedAt: new Date().toISOString(),
     };
 
     this.history.execute(
-      new UpdatePathCommand(
-        this.pathStore,
-        activePath,
-        updatedPath,
-        includePosition ? 'điểm cuối (vị trí & góc nhìn)' : 'hướng nhìn điểm cuối'
+      new UpdateHotspotCommand(
+        this.store,
+        targetHotspot,
+        updatedHotspot,
+        includePosition ? 'vị trí & hướng nhìn chuẩn' : 'hướng nhìn chuẩn'
       )
     );
 
     this.toastNotification.show(
       includePosition
-        ? 'Đã lưu cả Vị trí & Hướng nhìn camera điểm cuối cho tuyến!'
-        : 'Đã lưu Hướng nhìn camera điểm cuối (neo tại Hotspot đích)!',
+        ? `Đã lưu cả Vị trí & Hướng nhìn chuẩn cho Hotspot "${targetHotspot.name}"!`
+        : `Đã lưu Hướng nhìn chuẩn cho Hotspot "${targetHotspot.name}"!`,
       'success'
     );
+
     this.exitAligningEndOrientation(false);
     this.syncActivePathVisuals();
+    this.propertyPanel.updateFromStore();
     this.pathPropertyPanel.updateFromStore();
   }
 
   private resetEndOrientationToHotspotInHud(): void {
-    const activePath = this.pathStore.getActivePath();
-    if (!activePath) return;
+    let targetHotspot: HotspotItem | undefined;
+    if (this.aligningTargetHotspotId) {
+      targetHotspot = this.store.getById(this.aligningTargetHotspotId);
+    }
+    if (!targetHotspot) {
+      const activePath = this.pathStore.getActivePath();
+      if (activePath) {
+        targetHotspot = this.store.getById(activePath.toHotspotId);
+      }
+    }
+    if (!targetHotspot) return;
 
-    const toHotspot = this.store.getById(activePath.toHotspotId);
-    if (!toHotspot) return;
-
-    const yaw = toHotspot.rotation ? (toHotspot.rotation.y ?? 0) : 0;
-    const pitch = toHotspot.rotation ? (toHotspot.rotation.x ?? 0) : 0;
-    const roll = toHotspot.rotation ? (toHotspot.rotation.z ?? 0) : 0;
+    const yaw = targetHotspot.cameraView?.configured
+      ? targetHotspot.cameraView.yaw
+      : (targetHotspot.rotation?.y || 0);
+    const pitch = targetHotspot.cameraView?.configured
+      ? targetHotspot.cameraView.pitch
+      : (targetHotspot.rotation?.x || 0);
+    const roll = targetHotspot.cameraView?.configured
+      ? (targetHotspot.cameraView.roll || 0)
+      : (targetHotspot.rotation?.z || 0);
 
     const pitchRad = THREE.MathUtils.degToRad(pitch);
     const yawRad = THREE.MathUtils.degToRad(yaw);
@@ -1660,7 +2600,8 @@ export class EditorApp {
     const euler = new THREE.Euler(pitchRad, yawRad, rollRad, 'YXZ');
     const q = new THREE.Quaternion().setFromEuler(euler);
 
-    this.sceneManager.camera.position.set(toHotspot.position.x, toHotspot.position.y, toHotspot.position.z);
+    const yEye = targetHotspot.position.y < 1.0 ? 1.6 : targetHotspot.position.y + 1.2;
+    this.sceneManager.camera.position.set(targetHotspot.position.x, yEye, targetHotspot.position.z);
     this.sceneManager.camera.quaternion.copy(q);
 
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
@@ -1668,7 +2609,7 @@ export class EditorApp {
     this.navController.orbitControls.update();
 
     this.updateAligningHudDisplays();
-    this.toastNotification.show('Đã đưa camera về vị trí và góc nhìn gốc của Hotspot đích', 'info');
+    this.toastNotification.show(`Đã đưa camera về vị trí và góc nhìn gốc của "${targetHotspot.name}"`, 'info');
   }
 
   private cancelAligningEndOrientation(): void {
@@ -1678,6 +2619,7 @@ export class EditorApp {
 
   private exitAligningEndOrientation(restoreSnapshot: boolean): void {
     this.isAligningEndOrientation = false;
+    this.aligningTargetHotspotId = null;
     this.endOrientHud.style.display = 'none';
     document.body.style.cursor = 'default';
     this.navController.orbitControls.enabled = true;
@@ -1697,10 +2639,11 @@ export class EditorApp {
       return;
     }
 
-    ConfigStorageService.saveToLocalStorage(this.store, this.currentModelMeta, this.pathStore);
+    ConfigStorageService.saveToLocalStorage(this.store, this.currentModelMeta, this.pathStore, this.graphStore);
     this.store.setDirty(false);
     this.pathStore.setDirty(false);
-    this.toastNotification.show('Đã lưu cấu hình Hotspots và Tuyến camera thành công!', 'success');
+    this.graphStore.setDirty(false);
+    this.toastNotification.show('Đã lưu cấu hình Hotspots, Waypoint Graph và Tuyến camera thành công!', 'success');
   }
 
   private exportConfigJson(): void {
@@ -1713,20 +2656,83 @@ export class EditorApp {
       this.store,
       this.currentModelMeta,
       this.pathStore,
-      `Cấu hình Hotspot & Camera Paths - ${this.currentModelMeta.fileName}`
+      this.graphStore,
+      `Cấu hình Hotspot, Waypoint Graph & Camera Paths - ${this.currentModelMeta.fileName}`
     );
 
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `hotspots_and_paths_${this.currentModelMeta.fileName.replace(/\.[^/.]+$/, '')}_v1.1.0.json`;
+    a.download = `hotspots_and_graph_${this.currentModelMeta.fileName.replace(/\.[^/.]+$/, '')}_v1.3.0.json`;
     a.click();
     URL.revokeObjectURL(url);
 
     this.store.setDirty(false);
     this.pathStore.setDirty(false);
-    this.toastNotification.show('Đã xuất file cấu hình JSON thành công!', 'success');
+    this.graphStore.setDirty(false);
+    this.toastNotification.show('Đã xuất file cấu hình JSON v1.3.0 thành công!', 'success');
+  }
+
+  private exportBundledGlb(): void {
+    if (!this.currentModelMeta || this.sceneManager.currentModelGroup.children.length === 0) {
+      this.toastNotification.show('Chưa có mô hình 3D nào được nạp vào không gian', 'warning');
+      return;
+    }
+
+    this.toastNotification.show('Đang chuẩn bị đóng gói mô hình và cấu hình...', 'info');
+
+    // 1. Build full ProjectConfigSchema v1.3.0
+    const json = ConfigStorageService.exportToJson(
+      this.store,
+      this.currentModelMeta,
+      this.pathStore,
+      this.graphStore,
+      `Cấu hình Hotspot & Waypoint Graph - ${this.currentModelMeta.fileName}`
+    );
+    const parsedConfig = JSON.parse(json);
+
+    // 2. Clone or get root model object and attach config to userData
+    const targetModel = this.sceneManager.currentModelGroup.children[0] || this.sceneManager.currentModelGroup;
+    targetModel.userData = {
+      ...targetModel.userData,
+      bahaProjectConfig: parsedConfig,
+    };
+
+    // 3. Export single bundled GLB
+    const exporter = new GLTFExporter();
+    exporter.parse(
+      targetModel,
+      (gltf) => {
+        let buffer: ArrayBuffer;
+        if (gltf instanceof ArrayBuffer) {
+          buffer = gltf;
+        } else {
+          console.error('Unexpected GLTF exporter output', gltf);
+          this.toastNotification.show('Lỗi định dạng khi xuất file GLB', 'error');
+          return;
+        }
+
+        const blob = new Blob([buffer], { type: 'model/gltf-binary' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const baseName = this.currentModelMeta!.fileName.replace(/\.[^/.]+$/, '');
+        a.download = `${baseName}_bundled.glb`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        this.toastNotification.show(
+          `Đã đóng gói thành công file "${baseName}_bundled.glb" tích hợp sẵn Hotspots & Waypoint Graph!`,
+          'success'
+        );
+      },
+      (error) => {
+        console.error('GLB Bundle export error:', error);
+        this.toastNotification.show('Lỗi khi xuất file GLB: ' + error, 'error');
+      },
+      { binary: true }
+    );
   }
 
   private async importConfigJsonFile(file: File): Promise<void> {
@@ -1750,11 +2756,15 @@ export class EditorApp {
       }
 
       this.store.setAll(res.config.hotspots, true);
+      if (res.config.waypoints) {
+        this.graphStore.loadData(res.config.waypoints, res.config.waypointEdges || []);
+      }
       if (res.config.cameraPaths) {
         this.pathStore.setAll(res.config.cameraPaths, res.config.waypoints || [], true);
       }
+      this.updateGraphVisuals();
       this.toastNotification.show(
-        `Đã nhập thành công ${res.config.hotspots.length} hotspot và ${res.config.cameraPaths?.length || 0} tuyến camera!`,
+        `Đã nhập thành công ${res.config.hotspots.length} hotspot, ${this.graphStore.getAllWaypoints().length} waypoint và ${this.graphStore.getAllEdges().length} liên kết!`,
         'success'
       );
     } catch (err: any) {

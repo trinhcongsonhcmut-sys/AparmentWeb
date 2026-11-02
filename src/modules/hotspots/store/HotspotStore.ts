@@ -1,9 +1,9 @@
-import {
+import type {
   HotspotItem,
   HotspotFilterType,
   HotspotSortType,
-} from '../types/hotspot.types';
-import { EventBus, EditorEvents } from '../../../shared/events/EventBus';
+} from '../types/hotspot.types.ts';
+import { EventBus, EditorEvents } from '../../../shared/events/EventBus.ts';
 
 export type StoreChangeListener = () => void;
 

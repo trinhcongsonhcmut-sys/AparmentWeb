@@ -1,4 +1,4 @@
-import { ICommand } from './ICommand';
+import type { ICommand } from './ICommand.ts';
 
 export type HistoryChangeListener = (canUndo: boolean, canRedo: boolean, lastAction?: string) => void;
 

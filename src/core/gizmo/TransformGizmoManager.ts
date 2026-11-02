@@ -90,6 +90,25 @@ export class TransformGizmoManager {
   }
 
   public isDragging(): boolean {
-    return this.controls.dragging;
+    return this.controls.dragging || (this.controls.axis !== null);
+  }
+
+  public isInteracting(): boolean {
+    return this.controls.dragging || (this.controls.axis !== null);
+  }
+
+  public getAttachedObject(): THREE.Object3D | null {
+    return this.attachedObject;
+  }
+
+  public cancelDrag(): void {
+    if (this.attachedObject) {
+      this.attachedObject.position.copy(this.startPosition);
+      this.attachedObject.rotation.copy(this.startRotation);
+      this.callbacks.onDrag?.(this.startPosition, this.startRotation);
+      const obj = this.attachedObject;
+      this.detach();
+      this.attach(obj);
+    }
   }
 }
